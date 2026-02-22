@@ -1,1 +1,10 @@
-# bundle
+bundle:
+  name: workdir
+
+targets:
+  default:
+    default: true
+    mode: development
+    workspace:
+      host: https://dbc-67156f8d-53eb.cloud.databricks.com
+      profile: DEFAULT
