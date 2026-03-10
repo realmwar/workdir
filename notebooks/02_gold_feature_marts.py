@@ -88,8 +88,8 @@ if not REBUILD_ALL:
 # MAGIC FROM demo.silver.rossmann_train_feature_base
 # MAGIC WHERE business_date IS NOT NULL
 # MAGIC   AND store_id IS NOT NULL
-# MAGIC   AND label_sales IS NOT NULL
-# MAGIC   AND label_sales >= 0;
+# MAGIC   AND sales IS NOT NULL
+# MAGIC   AND sales >= 0;
 
 # COMMAND ----------
 
@@ -199,8 +199,8 @@ if not REBUILD_ALL:
 # MAGIC FROM demo.silver.nyc_zone_hour_feature_base
 # MAGIC WHERE pickup_date IS NOT NULL
 # MAGIC   AND pu_location_id IS NOT NULL
-# MAGIC   AND label_trip_cnt IS NOT NULL
-# MAGIC   AND label_trip_cnt >= 0;
+# MAGIC   AND trip_cnt IS NOT NULL
+# MAGIC   AND trip_cnt >= 0;
 
 # COMMAND ----------
 
