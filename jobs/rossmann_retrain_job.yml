@@ -1,0 +1,60 @@
+# ============================================================================
+# Rossmann Model Retrain Job
+# ============================================================================
+# Standalone job for re-training the Rossmann model on fresh data.
+# Can be scheduled independently or triggered by data freshness alerts.
+#
+# DAG: gold_refresh → training → serving
+# ============================================================================
+
+resources:
+  jobs:
+    rossmann_retrain:
+      name: "Rossmann — Model Retrain & Serve"
+      description: >
+        Refreshes gold marts, re-trains Rossmann models, registers the new
+        champion, and runs batch serving.
+
+      job_clusters:
+        - job_cluster_key: "retrain_cluster"
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 0
+
+      tasks:
+        - task_key: "refresh_gold"
+          description: "Refresh gold marts from latest silver data"
+          notebook_task:
+            notebook_path: "notebooks/02_gold_feature_marts"
+            base_parameters:
+              rebuild_all: "true"
+          job_cluster_key: "retrain_cluster"
+          timeout_seconds: 1200
+
+        - task_key: "train"
+          description: "Re-train Rossmann models and register champion"
+          depends_on:
+            - task_key: "refresh_gold"
+          notebook_task:
+            notebook_path: "notebooks/03_ml_baseline_training"
+            base_parameters:
+              log_to_uc_registry: "true"
+          job_cluster_key: "retrain_cluster"
+          timeout_seconds: 3600
+
+        - task_key: "serve"
+          description: "Batch inference with new champion model"
+          depends_on:
+            - task_key: "train"
+          notebook_task:
+            notebook_path: "notebooks/06_serving_contracts"
+          job_cluster_key: "retrain_cluster"
+          timeout_seconds: 1200
+
+      # Run weekly on Mondays at 6 AM UTC.
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: "UTC"
+
+      max_concurrent_runs: 1

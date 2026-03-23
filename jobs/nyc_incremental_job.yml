@@ -1,0 +1,77 @@
+# ============================================================================
+# NYC TLC Incremental Processing Job
+# ============================================================================
+# Simulates incremental/streaming-like ETL for the NYC TLC dataset.
+# Designed for the phase 2 mini-project (streaming-like patterns).
+#
+# DAG: intake_new_months → silver → gold → training → serving
+# ============================================================================
+
+resources:
+  jobs:
+    nyc_incremental:
+      name: "NYC TLC — Incremental ETL + Retrain"
+      description: >
+        Ingests new NYC TLC data months, processes through silver/gold layers,
+        and re-trains the demand forecasting model.
+
+      job_clusters:
+        - job_cluster_key: "incremental_cluster"
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 0
+
+      tasks:
+        - task_key: "intake_incremental"
+          description: "Download and register new NYC TLC months"
+          notebook_task:
+            notebook_path: "notebooks/00_uc_bootstrap_and_data_intake"
+            base_parameters:
+              nyc_months: "3"
+              force_redownload: "false"
+          job_cluster_key: "incremental_cluster"
+          timeout_seconds: 1200
+
+        - task_key: "silver_refresh"
+          depends_on:
+            - task_key: "intake_incremental"
+          notebook_task:
+            notebook_path: "notebooks/01_silver_transformations"
+            base_parameters:
+              rebuild_all: "true"
+          job_cluster_key: "incremental_cluster"
+          timeout_seconds: 1200
+
+        - task_key: "gold_refresh"
+          depends_on:
+            - task_key: "silver_refresh"
+          notebook_task:
+            notebook_path: "notebooks/02_gold_feature_marts"
+            base_parameters:
+              rebuild_all: "true"
+          job_cluster_key: "incremental_cluster"
+          timeout_seconds: 1200
+
+        - task_key: "retrain_nyc"
+          depends_on:
+            - task_key: "gold_refresh"
+          notebook_task:
+            notebook_path: "notebooks/05_nyc_demand_model"
+          job_cluster_key: "incremental_cluster"
+          timeout_seconds: 3600
+
+        - task_key: "serve_nyc"
+          depends_on:
+            - task_key: "retrain_nyc"
+          notebook_task:
+            notebook_path: "notebooks/06_serving_contracts"
+          job_cluster_key: "incremental_cluster"
+          timeout_seconds: 1200
+
+      # Run monthly on the 1st at 3 AM UTC.
+      schedule:
+        quartz_cron_expression: "0 0 3 1 * ?"
+        timezone_id: "UTC"
+
+      max_concurrent_runs: 1

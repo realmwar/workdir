@@ -1,0 +1,120 @@
+# ============================================================================
+# E2E ML Pipeline — Databricks Job Definition
+# ============================================================================
+# This YAML defines the full end-to-end pipeline as a Databricks multi-task
+# job with task dependencies forming a DAG.
+#
+# DAG structure:
+#   00_intake ──> 01_silver ──> 02_gold ──┬──> 03_rossmann_training ──> 06_serving
+#                                         └──> 05_nyc_training ────────┘
+#
+# Usage:
+#   Include this in databricks.yml under `resources.jobs` or deploy via
+#   `databricks bundle deploy`.
+# ============================================================================
+
+resources:
+  jobs:
+    e2e_ml_pipeline:
+      name: "E2E ML Pipeline — Full DAG"
+      description: >
+        End-to-end ML pipeline: data intake → silver → gold → model training
+        (Rossmann + NYC) → batch serving. Covers all medallion layers and
+        model lifecycle stages.
+
+      # Use serverless compute (SQL Serverless on Databricks Free).
+      job_clusters:
+        - job_cluster_key: "pipeline_cluster"
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 0
+            spark_conf:
+              "spark.databricks.cluster.profile": "serverless"
+
+      tasks:
+        # ------------------------------------------------------------------
+        # Stage 0: Data Intake & UC Bootstrap
+        # ------------------------------------------------------------------
+        - task_key: "intake"
+          description: "UC bootstrap, download datasets, register landing/bronze tables"
+          notebook_task:
+            notebook_path: "notebooks/00_uc_bootstrap_and_data_intake"
+            base_parameters:
+              nyc_months: "6"
+              force_redownload: "false"
+          job_cluster_key: "pipeline_cluster"
+          timeout_seconds: 1800
+
+        # ------------------------------------------------------------------
+        # Stage 1: Silver Transformations
+        # ------------------------------------------------------------------
+        - task_key: "silver"
+          description: "Clean/enrich bronze → silver feature-base tables"
+          depends_on:
+            - task_key: "intake"
+          notebook_task:
+            notebook_path: "notebooks/01_silver_transformations"
+            base_parameters:
+              rebuild_all: "true"
+          job_cluster_key: "pipeline_cluster"
+          timeout_seconds: 1800
+
+        # ------------------------------------------------------------------
+        # Stage 2: Gold Feature Marts
+        # ------------------------------------------------------------------
+        - task_key: "gold"
+          description: "Materialize training/serving/dashboard gold marts"
+          depends_on:
+            - task_key: "silver"
+          notebook_task:
+            notebook_path: "notebooks/02_gold_feature_marts"
+            base_parameters:
+              rebuild_all: "true"
+          job_cluster_key: "pipeline_cluster"
+          timeout_seconds: 1800
+
+        # ------------------------------------------------------------------
+        # Stage 3a: Rossmann Model Training
+        # ------------------------------------------------------------------
+        - task_key: "rossmann_training"
+          description: "Train Rossmann baseline models, log to MLflow, register champion"
+          depends_on:
+            - task_key: "gold"
+          notebook_task:
+            notebook_path: "notebooks/03_ml_baseline_training"
+            base_parameters:
+              log_to_uc_registry: "true"
+          job_cluster_key: "pipeline_cluster"
+          timeout_seconds: 3600
+
+        # ------------------------------------------------------------------
+        # Stage 3b: NYC Demand Model Training (parallel with Rossmann)
+        # ------------------------------------------------------------------
+        - task_key: "nyc_training"
+          description: "Train NYC demand models, log to MLflow, register champion"
+          depends_on:
+            - task_key: "gold"
+          notebook_task:
+            notebook_path: "notebooks/05_nyc_demand_model"
+          job_cluster_key: "pipeline_cluster"
+          timeout_seconds: 3600
+
+        # ------------------------------------------------------------------
+        # Stage 4: Batch Serving
+        # ------------------------------------------------------------------
+        - task_key: "serving"
+          description: "Load champion models, run batch inference, persist serving predictions"
+          depends_on:
+            - task_key: "rossmann_training"
+            - task_key: "nyc_training"
+          notebook_task:
+            notebook_path: "notebooks/06_serving_contracts"
+          job_cluster_key: "pipeline_cluster"
+          timeout_seconds: 1800
+
+      # Retry and notification configuration.
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure:
+          - "pipeline-alerts@example.com"

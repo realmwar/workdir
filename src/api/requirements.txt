@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic>=2.0
+mlflow
+numpy
+pandas
+scikit-learn
+lightgbm
+xgboost
