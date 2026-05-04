@@ -18,6 +18,19 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Sets up runtime parameters and controls notebook execution. It:
+# MAGIC
+# MAGIC - Creates a dropdown widget named `rebuild_all` with options **"true"** and **"false"** (defaulting to **"true"**).
+# MAGIC - Reads the widget value and converts it to a boolean variable `REBUILD_ALL`.
+# MAGIC - Sets the catalog name to `demo` for all downstream queries.
+# MAGIC - Prints the configuration values for visibility.
+# MAGIC - Implements an early exit: if `rebuild_all` is set to "false", the notebook exits immediately with a message, skipping all silver layer transformations.
+# MAGIC
+# MAGIC This provides a parameter-driven way to control whether the entire silver transformation pipeline runs or is skipped, useful for scheduled jobs where you may want conditional execution based on data freshness or other logic.
+
+# COMMAND ----------
+
 dbutils.widgets.dropdown("rebuild_all", "true", ["true", "false"])
 REBUILD_ALL = dbutils.widgets.get("rebuild_all").lower() == "true"
 
@@ -33,6 +46,18 @@ if not REBUILD_ALL:
 
 # MAGIC %md
 # MAGIC ## 2) Silver prep: schema and quality table
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Sets up the core schema infrastructure for silver layer processing. It:
+# MAGIC
+# MAGIC - Creates the `demo` catalog if it doesn't exist.
+# MAGIC - Creates the `demo.silver` schema to hold cleaned and enriched silver tables.
+# MAGIC - Creates the `demo.audit` schema for operational observability.
+# MAGIC - Creates the `demo.audit.silver_snapshot` table with columns for `snapshot_ts`, `table_name`, and `row_count` to track row counts over time.
+# MAGIC
+# MAGIC This is foundational setup that ensures all downstream silver transformations have the proper catalog structure and audit tracking table in place. The silver_snapshot table will later be used to record row counts for each silver table as a pipeline regression check.
 
 # COMMAND ----------
 
@@ -52,6 +77,28 @@ if not REBUILD_ALL:
 
 # MAGIC %md
 # MAGIC ## 3) Rossmann: clean and enrich (silver)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Transforms raw Rossmann store sales data from the bronze layer into a clean, ML-ready silver table. 
+# MAGIC The core idea is **data quality** + **feature engineering for forecasting**:
+# MAGIC
+# MAGIC **Data Quality Layer:**
+# MAGIC
+# MAGIC - Safely converts CSV strings to proper types (INT, DOUBLE, DATE) using `TRY_CAST` to avoid pipeline breaks.
+# MAGIC - Applies smart defaults for missing flags (assumes stores are open, no promo if blank).
+# MAGIC - Filters out unusable rows (missing store/date/sales, negative sales outliers).
+# MAGIC
+# MAGIC **Feature Engineering Layer:**
+# MAGIC
+# MAGIC - Creates calendar features (year, month, week, day) for seasonality modeling.
+# MAGIC - Builds business logic features (weekend flag, average ticket size, log-transformed sales for variance stabilization).
+# MAGIC - Preserves audit lineage (original ingest timestamp and source file).
+# MAGIC
+# MAGIC **Output:** The execution created `demo.silver.rossmann_train_clean` successfully. This table now contains validated, feature-enriched training data ready for the next step where it gets joined with store attributes and time-series lag features are added.
+# MAGIC
+# MAGIC The transformation is **defensive by design** — it won't crash on bad data, and it explicitly documents what constitutes "clean" through the WHERE clause filters.
 
 # COMMAND ----------
 
@@ -97,6 +144,28 @@ if not REBUILD_ALL:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Transforms the Rossmann test dataset using the same cleaning logic as the training data (cell 10), but adapted for inference. The core idea is feature parity without targets:
+# MAGIC
+# MAGIC **Mirrors Training Cleanup:**
+# MAGIC
+# MAGIC - Same defensive type casting with `TRY_CAST` to handle CSV inconsistencies.
+# MAGIC - Same null handling defaults (stores assumed open, no promo if missing).
+# MAGIC - Same `state_holiday_code` normalization.
+# MAGIC - Same calendar features (year, month, week, day, weekend flag).
+# MAGIC
+# MAGIC **Inference-Specific Adaptations:**
+# MAGIC
+# MAGIC - Preserves `prediction_id` (from the original `Id` column) — critical for joining predictions back to the original test rows when scoring.
+# MAGIC - **Excludes all target variables** (`sales`, `customers`, `avg_ticket`, `log1p_sales`) since test data doesn't have these.
+# MAGIC - No sales-based filtering — only validates that `store_id` and `business_date` exist.
+# MAGIC
+# MAGIC **Output:** Successfully created `demo.silver.rossmann_test_clean`, providing test data with identical feature engineering to training data, ensuring model compatibility during inference.
+# MAGIC
+# MAGIC This design enforces **train-serve consistency** — the model will see the same feature names, types, and transformations at serving time as it did during training, preventing schema mismatches and prediction errors.
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC -- Test table cleanup mirrors train cleanup, excluding target columns.
 # MAGIC -- prediction_id is preserved for serving/inference joins later.
@@ -129,6 +198,27 @@ if not REBUILD_ALL:
 # MAGIC FROM base
 # MAGIC WHERE store_id IS NOT NULL
 # MAGIC   AND business_date IS NOT NULL;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Cleans the Rossmann store dimension table with a focus on **statistical imputation for missing competitive intelligence**. The core idea is **dimension enrichment with robust defaults**:
+# MAGIC
+# MAGIC **Type Safety & Structure:**
+# MAGIC
+# MAGIC - Casts store attributes (`store_type`, `assortment_type`, `competition` fields, `promo2` fields) to proper types using `TRY_CAST`
+# MAGIC - Preserves audit lineage (`ingest_ts`, `source_file`)
+# MAGIC - Applies smart defaults (`has_promo2` defaults to 0 if missing)
+# MAGIC
+# MAGIC **Statistical Imputation Strategy:**
+# MAGIC
+# MAGIC - Calculates the **median competition distance** across all stores in a separate `stats` CTE
+# MAGIC - Uses `COALESCE` to fill missing `competition_distance` values with the median
+# MAGIC - **Why median?** More robust than mean when dealing with geographic outliers—a few stores with extremely distant competitors won't skew the imputation
+# MAGIC
+# MAGIC **Output:** Successfully created `demo.silver.rossmann_store_clean`, a dimension table ready to be joined with transactional train/test data. The imputation ensures no store is excluded from analysis due to missing competition data, while the median provides a sensible, outlier-resistant default.
+# MAGIC
+# MAGIC This is a classic **slowly changing dimension (Type 1)** pattern — static store attributes that enrich time-series forecasting models with business context (store type affects sales patterns, competition affects performance).
 
 # COMMAND ----------
 
@@ -179,6 +269,31 @@ if not REBUILD_ALL:
 
 # MAGIC %md
 # MAGIC ## 4) Rossmann: feature-base for future model training/serving
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Creates the ML-ready training feature-base by combining transactional data with store dimensions and building time-series features. The core idea is **join + temporal feature engineering for forecasting models**:
+# MAGIC
+# MAGIC **Data Enrichment via Join:**
+# MAGIC
+# MAGIC - Joins cleaned train transactions with store dimension attributes (store type, assortment, competition distance, promo2 settings)
+# MAGIC - Brings static store context into each daily transaction row
+# MAGIC
+# MAGIC **Business Logic Features:**
+# MAGIC
+# MAGIC - `is_promo2_active`: Determines whether Promo2 was active on this date based on when the store started participating (year/week comparison)
+# MAGIC - `is_promo_interval_month`: Checks if the current month matches the store's promotional calendar (parses comma-separated month strings like "Jan,Apr,Jul,Oct")
+# MAGIC
+# MAGIC **Time-Series Features for Forecasting:**
+# MAGIC
+# MAGIC - **Lag features:** `lag_sales_1d` (yesterday's sales) and `lag_sales_7d` (same day last week) capture autoregressive patterns
+# MAGIC - **Rolling windows:** 7-day rolling averages for sales and customers capture recent trends
+# MAGIC - **Promo history:** `promo_days_last_14d` counts how many promotional days occurred in the past 2 weeks, capturing promo fatigue/momentum effects
+# MAGIC
+# MAGIC **Output:** Successfully created `demo.silver.rossmann_train_feature_base`, a wide-format ML training table ready for model consumption. This table includes everything a forecasting model needs: static store attributes, calendar features from cell 10, promotional intelligence, and temporal autoregressive signals.
+# MAGIC
+# MAGIC This is the **authoritative training dataset** — all features are computed from historical data using proper time-based windowing to prevent data leakage.
 
 # COMMAND ----------
 
@@ -259,6 +374,27 @@ if not REBUILD_ALL:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Creates the ML-ready inference feature-base for the Rossmann test dataset. The core idea is **train-serve feature consistency with intentional target leakage prevention**:
+# MAGIC
+# MAGIC **Data Enrichment (Mirrors Training):**
+# MAGIC
+# MAGIC - Joins cleaned test transactions with store dimension attributes (store type, assortment, competition distance, promo2 settings)
+# MAGIC - Includes the same business logic features as training: `is_promo2_active` and `is_promo_interval_month`
+# MAGIC - Preserves `prediction_id` for mapping predictions back to original test rows
+# MAGIC
+# MAGIC **Critical Design Choice - Excludes Temporal Features:**
+# MAGIC
+# MAGIC - Deliberately omits all lag features (`lag_sales_1d`, `lag_sales_7d`) and rolling windows (`rolling_sales_mean_7d`, `promo_days_last_14d`) that were in the training feature-base
+# MAGIC - **Why?** At inference time, future sales don't exist yet—you can't compute yesterday's sales for a prediction about tomorrow
+# MAGIC - This prevents **target leakage** and ensures the model only uses features available at prediction time
+# MAGIC - 
+# MAGIC Output: Successfully created `demo.silver.rossmann_test_feature_base` with a **reduced feature set compared to training**. This is intentional: the model must be trained on a subset of features that will actually be available during serving, or you need a separate inference-time strategy to populate lag features (e.g., using the model's own recent predictions).
+# MAGIC
+# MAGIC This enforces **production realism** — the test feature-base reflects what you'll actually have when making real-world predictions, not idealized training conditions.
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC -- Feature base for inference:
 # MAGIC -- uses test rows + store attributes; excludes target-derived lag features by design.
@@ -301,6 +437,29 @@ if not REBUILD_ALL:
 
 # MAGIC %md
 # MAGIC ## 5) NYC TLC: clean and feature-base
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Transforms raw NYC taxi trip data from the bronze layer into a clean, analysis-ready silver table with domain-specific feature engineering. The core idea is **aggressive outlier filtering** + **urban mobility feature engineering**:
+# MAGIC
+# MAGIC **Data Quality Layer (Multi-Stage Filtering):**
+# MAGIC
+# MAGIC - Safe type casting with `TRY_CAST` to handle raw parquet inconsistencies
+# MAGIC -**Trip validity rules:** removes impossible trips (dropoff before pickup, missing timestamps)
+# MAGIC - **Range-based anomaly detection:** filters extreme outliers (distances `<0` or `>100` miles, fares `>$1000`, durations `<1` or `>180` minutes)
+# MAGIC - Ensures required location IDs exist (critical for zone-based analysis)
+# MAGIC
+# MAGIC **Feature Engineering for Urban Mobility Analysis:**
+# MAGIC
+# MAGIC - **Temporal features:** extracts pickup date, hour, day of week, month for demand patterns
+# MAGIC - **Behavioral indicators:** weekend flag, rush hour flag (7-9 AM, 4-7 PM) for congestion/surge modeling
+# MAGIC - **Trip characteristics:** calculates trip duration in minutes, average speed (mph) to detect unusual patterns
+# MAGIC - **Revenue metrics:** computes tip percentage (`tip_pct`) as a behavioral and service quality signal
+# MAGIC
+# MAGIC **Output:** Successfully created `demo.silver.nyc_taxi_trips_clean`, a trip-level table ready for aggregation. The aggressive filtering removes bad sensor data and fraudulent/erroneous records common in taxi meter data, while the engineered features support downstream demand forecasting and revenue optimization models.
+# MAGIC
+# MAGIC This is **trip-level granularity** — each row is one taxi ride with enriched context, ready to be aggregated by zone/hour for demand modeling.
 
 # COMMAND ----------
 
@@ -381,6 +540,31 @@ if not REBUILD_ALL:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Aggregates individual taxi trips into a zone-hour level time-series table for demand forecasting. The core idea is **granularity shift** + **temporal demand signals**:
+# MAGIC
+# MAGIC **Granularity Transformation:**
+# MAGIC
+# MAGIC - Aggregates trip-level data (cell 22) to (pickup_date, pickup_hour, pu_location_id) level
+# MAGIC - Creates a much smaller table optimized for time-series modeling (zone-hour observations instead of individual trips)
+# MAGIC - Computes aggregate metrics: trip count, average distance/duration/fare, average tip percentage, total revenue
+# MAGIC
+# MAGIC **Time-Series Feature Engineering:**
+# MAGIC
+# MAGIC - Constructs a proper timestamp (`zone_hour_ts`) from date + hour for window function ordering
+# MAGIC - Autoregressive features:
+# MAGIC   - `lag_trip_cnt_1h`: demand 1 hour ago (captures short-term momentum)
+# MAGIC   - `lag_trip_cnt_24h`: demand at the same hour yesterday (captures daily seasonality)
+# MAGIC - Rolling trend indicators:
+# MAGIC   - `rolling_trip_cnt_mean_24h`: average demand over past 24 hours
+# MAGIC   - `rolling_fare_mean_24h`: average fare over past 24 hours (for revenue forecasting)
+# MAGIC
+# MAGIC **Output:** Successfully created `demo.silver.nyc_zone_hour_feature_base`, a time-series table ready for **demand forecasting models** that predict trip volume per zone per hour. This granularity is ideal for operational planning (driver dispatch, surge pricing) and differs from the Rossmann feature-bases which operate at daily store-level granularity.
+# MAGIC
+# MAGIC This is an **ML-ready aggregation** — each row represents demand at a specific zone-hour with historical context, enabling models to learn hourly patterns, weekly cycles, and zone-specific demand characteristics.
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC -- Zone-hour feature base:
 # MAGIC -- aggregates at (pickup_date, pickup_hour, pickup_zone) and adds lag/rolling demand signals.
@@ -441,6 +625,31 @@ if not REBUILD_ALL:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Captures a point-in-time snapshot of silver layer row counts for operational observability. The core idea is **audit trail + regression detection**:
+# MAGIC
+# MAGIC **Audit Trail Creation:**
+# MAGIC
+# MAGIC Inserts row counts for all 5 silver tables into `demo.audit.silver_snapshot` with a single timestamp
+# MAGIC Uses `UNION ALL` to batch-insert all metrics in one transaction
+# MAGIC Captures: `rossmann_train_clean`, `rossmann_store_clean`, `rossmann_train_feature_base`, `nyc_taxi_trips_clean`, `nyc_zone_hour_feature_base`
+# MAGIC
+# MAGIC **Immediate Validation:**
+# MAGIC
+# MAGIC Displays the complete audit history ordered by timestamp and table name
+# MAGIC Shows the current run alongside any previous runs for comparison
+# MAGIC
+# MAGIC **Output:** Successfully recorded 5 table snapshots at `2026-02-26 19:05:11`:
+# MAGIC
+# MAGIC - **Rossmann train data:** `1,017,209` rows preserved through both clean and feature-base transformations
+# MAGIC - **Rossmann stores:** `1,115` dimension records
+# MAGIC - **NYC trips:** `2,987,067` cleaned trip records
+# MAGIC - **NYC zone-hour aggregates:** `67,019` time-series observations
+# MAGIC
+# MAGIC This enables **pipeline regression detection** — if future runs show unexpected row count drops (indicating bad filters or data issues) or spikes (indicating data quality problems upstream), you can catch them immediately by comparing against historical snapshots. This is production-grade data engineering observability.
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC INSERT INTO demo.audit.silver_snapshot
 # MAGIC -- Persist row counts for operational visibility and pipeline regression checks.
@@ -455,6 +664,33 @@ if not REBUILD_ALL:
 # MAGIC SELECT current_timestamp(), 'demo.silver.nyc_zone_hour_feature_base', COUNT(*) FROM demo.silver.nyc_zone_hour_feature_base;
 # MAGIC
 # MAGIC SELECT * FROM demo.audit.silver_snapshot ORDER BY snapshot_ts DESC, table_name;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Performs final validation checks on the ML-ready feature-base tables. 
+# MAGIC The core idea is **data completeness verification + temporal coverage audit**:
+# MAGIC
+# MAGIC **Sanity Check Design:**
+# MAGIC
+# MAGIC - Queries both ML-ready feature-base tables (Rossmann training and NYC zone-hour)
+# MAGIC - Computes three critical metrics per dataset: row count, earliest date, latest date
+# MAGIC - Uses UNION ALL to present side-by-side comparison in a single result set
+# MAGIC
+# MAGIC **Business Value:**
+# MAGIC
+# MAGIC - Row counts confirm no catastrophic data loss during transformations
+# MAGIC - Date ranges verify temporal coverage meets modeling requirements (sufficient history for training)
+# MAGIC - Provides a quick "at-a-glance" health check before proceeding to model training
+# MAGIC
+# MAGIC **Output Results:**
+# MAGIC
+# MAGIC - **Rossmann training:** `1,017,209` rows spanning **2.5 years** (Jan 2013 - July 2015) — substantial history for capturing seasonality and trends
+# MAGIC - **NYC zone-hour:** `67,019` rows spanning **3+ months** (Oct 2022 - Feb 2023) — sufficient hourly observations for short-term demand patterns
+# MAGIC
+# MAGIC This is a **final pre-flight check** before handing off to the modeling pipeline. 
+# MAGIC If date ranges were truncated or row counts dramatically different from audit snapshots in cell 27, it would signal a transformation issue requiring investigation. 
+# MAGIC This validates that the feature engineering preserved data integrity and the tables are ready for model training.
 
 # COMMAND ----------
 

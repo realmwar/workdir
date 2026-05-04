@@ -18,6 +18,11 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This cell creates Databricks widgets for runtime parameters, parses their values, and prints them. The widgets allow users to specify which NYC TLC months to ingest and whether to force re-download of datasets. The parsed values are stored in variables for use in subsequent data intake steps.
+
+# COMMAND ----------
+
 dbutils.widgets.text("nyc_months", "2023-01,2023-02,2023-03,2023-04,2023-05,2023-06")
 dbutils.widgets.dropdown("force_redownload", "false", ["false", "true"])
 
@@ -33,6 +38,12 @@ print("force_redownload:", FORCE_REDOWNLOAD)
 
 # MAGIC %md
 # MAGIC ## 2) Create schemas and volumes (UC)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC This cell uses SQL to create schemas and a volume in the `demo` catalog for the medallion architecture. It ensures the catalog, schemas (landing, bronze, silver, gold, ml, serving, audit), and the `raw_data` volume are created if they do not already exist, making the setup idempotent.
 
 # COMMAND ----------
 
@@ -55,6 +66,21 @@ print("force_redownload:", FORCE_REDOWNLOAD)
 
 # MAGIC %md
 # MAGIC ## 3) Download public datasets into UC Volume
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Defines a `download_file()` helper function that uses `urllib.request` to fetch remote files, with optional force re-download and skip-if-exists logic.
+# MAGIC
+# MAGIC Sets up paths to the volume at `/Volumes/demo/landing/raw_data/` with subdirectories for Rossmann and NYC TLC data.
+# MAGIC
+# MAGIC Downloads three Rossmann CSV files (`train.csv`, `test.csv`, `store.csv`) from a GitHub repository.
+# MAGIC
+# MAGIC Downloads NYC yellow taxi trip data as monthly parquet files based on the `NYC_MONTHS` parameter configured in cell 4.
+# MAGIC
+# MAGIC The cell respects the `FORCE_REDOWNLOAD` flag and prints download progress with file sizes. 
+# MAGIC All files land in the Unity Catalog volume for subsequent table registration.
+# MAGIC
 
 # COMMAND ----------
 
@@ -106,6 +132,23 @@ print("raw dataset intake complete.")
 
 # MAGIC %md
 # MAGIC ## 4) Register landing tables
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Registers four landing tables from the raw files downloaded into the UC Volume. It:
+# MAGIC
+# MAGIC - Creates `demo.landing.rossmann_train_raw` by reading `train.csv` with CSV format, header parsing, and schema inference.
+# MAGIC - Creates `demo.landing.rossmann_test_raw` from `test.csv` with the same CSV settings.
+# MAGIC - Creates `demo.landing.rossmann_store_raw` from `store.csv` with the same CSV settings.
+# MAGIC - Creates `demo.landing.nyc_taxi_trips_raw` by reading all NYC taxi parquet files matching the wildcard pattern `yellow_tripdata_*.parquet`.
+# MAGIC
+# MAGIC Each table includes:
+# MAGIC
+# MAGIC - All columns from the source files (`*`).
+# MAGIC - `ingest_ts` timestamp column capturing when the data was loaded.
+# MAGIC - `source_file` column recording the file path via `input_file_name()`.
+# MAGIC The cell uses `CREATE OR REPLACE TABLE` to make the registration idempotent, and leverages `read_files()` to load data directly from the volume paths.
 
 # COMMAND ----------
 
@@ -163,6 +206,18 @@ print("raw dataset intake complete.")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Promotes landing tables to the bronze layer in the medallion architecture. It:
+# MAGIC
+# MAGIC - Creates `demo.bronze.rossmann_train` from the landing table, selecting all columns plus adding a bronze_loaded_at timestamp audit field
+# MAGIC - Creates `demo.bronze.rossmann_test` from the landing table with the same pattern
+# MAGIC - Creates `demo.bronze.rossmann_store` from the landing table with the same pattern
+# MAGIC - Creates `demo.bronze.nyc_taxi_trips` from the landing table with the same pattern
+# MAGIC
+# MAGIC Each bronze table is a straightforward copy of its corresponding landing table (which already has `ingest_ts` and `source_file` columns from cell 13), with one additional audit field capturing when the data was loaded into the bronze layer. The cell uses `CREATE OR REPLACE TABLE` to make the operation idempotent.
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE TABLE demo.bronze.rossmann_train AS
 # MAGIC SELECT
@@ -195,6 +250,17 @@ print("raw dataset intake complete.")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Performs basic validation and creates an audit snapshot. It:
+# MAGIC
+# MAGIC - Creates the `demo.audit.intake_snapshot` table if it doesn't exist, with columns for snapshot timestamp, table name, and row count.
+# MAGIC - Inserts four rows capturing the current timestamp and row count for each bronze table (`rossmann_train`, `rossmann_test`, `rossmann_store`, `nyc_taxi_trips`) using UNION ALL.
+# MAGIC - Queries the audit table to display all snapshots ordered by timestamp descending and table name. 
+# MAGIC
+# MAGIC This provides a historical record of row counts after each data intake run, enabling tracking of data volume changes over time and validating that the bronze layer was successfully populated.
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC CREATE TABLE IF NOT EXISTS demo.audit.intake_snapshot (
 # MAGIC   snapshot_ts TIMESTAMP,
@@ -217,6 +283,17 @@ print("raw dataset intake complete.")
 
 # MAGIC %md
 # MAGIC ## 7) Quick sanity checks
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Performs quick sanity checks on the bronze layer data. It:
+# MAGIC
+# MAGIC - Queries `demo.bronze.rossmann_train` to count rows and find the date range (MIN/MAX of the `Date` column).
+# MAGIC - Queries `demo.bronze.nyc_taxi_trips` to count rows and find the date range (MIN/MAX of `tpep_pickup_datetime`).
+# MAGIC - Uses UNION ALL to combine both results into a single output table with columns: `dataset`, `rows`, `min_date`, `max_date`.
+# MAGIC This provides a quick validation of data completeness and temporal coverage for the two primary datasets after ingestion, making it easy to verify that the expected data landed and spot any date range anomalies.
+# MAGIC
 
 # COMMAND ----------
 
