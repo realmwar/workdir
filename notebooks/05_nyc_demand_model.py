@@ -43,7 +43,13 @@ import mlflow.sklearn
 import mlflow.keras
 
 CATALOG = "demo"
-EXPERIMENT_NAME = f"/Users/{spark.conf.get('spark.databricks.notebook.path', '/Shared')}/nyc_demand_forecasting"
+try:
+    _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+    _user = _ctx.userName().get()
+    EXPERIMENT_NAME = f"/Users/{_user}/mlflow_experiments/nyc_demand_forecasting"
+except Exception:
+    EXPERIMENT_NAME = "/Shared/mlflow_experiments/nyc_demand_forecasting"
+    
 mlflow.set_experiment(EXPERIMENT_NAME)
 
 print("setup OK")

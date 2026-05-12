@@ -26,10 +26,20 @@ dbutils.widgets.dropdown("log_to_uc_registry", "true", ["true", "false"])
 LOG_TO_UC_REGISTRY = dbutils.widgets.get("log_to_uc_registry").lower() == "true"
 
 CATALOG = "demo"
-EXPERIMENT_NAME = f"/Users/{spark.conf.get('spark.databricks.notebook.path', '/Shared')}/rossmann_baseline"
+
+# Resolve MLflow experiment path in a Serverless-safe way.
+# spark.conf.get("spark.databricks.notebook.path") fails under Spark Connect
+# (Databricks Free / Serverless), so we use dbutils context with a /Shared fallback.
+try:
+    _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+    _user = _ctx.userName().get()
+    EXPERIMENT_NAME = f"/Users/{_user}/mlflow_experiments/rossmann_baseline"
+except Exception:
+    EXPERIMENT_NAME = "/Shared/mlflow_experiments/rossmann_baseline"
 
 print("catalog:", CATALOG)
 print("log_to_uc_registry:", LOG_TO_UC_REGISTRY)
+print("experiment_name:", EXPERIMENT_NAME)
 
 # COMMAND ----------
 

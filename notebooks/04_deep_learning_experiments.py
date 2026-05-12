@@ -41,7 +41,13 @@ import mlflow.tensorflow
 import mlflow.keras
 
 CATALOG = "demo"
-EXPERIMENT_NAME = f"/Users/{spark.conf.get('spark.databricks.notebook.path', '/Shared')}/rossmann_deep_learning"
+try:
+    _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+    _user = _ctx.userName().get()
+    EXPERIMENT_NAME = f"/Users/{_user}/mlflow_experiments/rossmann_deep_learning"
+except Exception:
+    EXPERIMENT_NAME = "/Shared/mlflow_experiments/rossmann_deep_learning"
+
 mlflow.set_experiment(EXPERIMENT_NAME)
 
 print(f"TensorFlow version: {tf.__version__}")
