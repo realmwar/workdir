@@ -18,6 +18,28 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 0) Install dependencies (Serverless)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The Serverless runtime ships with `numpy`, `pandas`, `sklearn`, `matplotlib`, and `mlflow`
+# MAGIC out of the box, but the two gradient boosting libraries we want to benchmark — `lightgbm`
+# MAGIC and `xgboost` — are not preinstalled. We `pip install` them inline, then call
+# MAGIC `dbutils.library.restartPython()` so the kernel picks up the freshly installed wheels
+# MAGIC before any of the import cells below run.
+
+# COMMAND ----------
+
+# MAGIC %pip install lightgbm xgboost
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 1) Runtime parameters & imports
 
 # COMMAND ----------
