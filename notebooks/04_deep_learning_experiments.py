@@ -17,6 +17,27 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 0) Install dependencies (Serverless)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Serverless ships with `numpy`, `pandas`, `sklearn`, `matplotlib`, and `mlflow`, but TensorFlow
+# MAGIC (and the optional `tensorflow-model-optimization` package used in section 9 for pruning) are
+# MAGIC not preinstalled. We `pip install` them inline and then call `dbutils.library.restartPython()`
+# MAGIC so the kernel picks up the freshly installed wheels before any of the import cells below run.
+
+# COMMAND ----------
+
+# MAGIC %pip install tensorflow tensorflow-model-optimization
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 1) Imports & runtime config
 
 # COMMAND ----------
@@ -27,8 +48,6 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use("Agg")
 
 import tensorflow as tf
 from tensorflow import keras
@@ -44,10 +63,12 @@ CATALOG = "demo"
 try:
     _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
     _user = _ctx.userName().get()
-    EXPERIMENT_NAME = f"/Users/{_user}/mlflow_experiments/rossmann_deep_learning"
+    EXPERIMENT_NAME = f"/Users/{_user}/rossmann_deep_learning"
 except Exception:
-    EXPERIMENT_NAME = "/Shared/mlflow_experiments/rossmann_deep_learning"
+    EXPERIMENT_NAME = "/Shared/rossmann_deep_learning"
 
+mlflow.set_tracking_uri("databricks")
+mlflow.set_registry_uri("databricks-uc")
 mlflow.set_experiment(EXPERIMENT_NAME)
 
 print(f"TensorFlow version: {tf.__version__}")
@@ -261,7 +282,7 @@ axes[1].legend()
 
 plt.tight_layout()
 plt.savefig("/tmp/fnn_baseline_curves.png", dpi=100)
-plt.show()
+display(fig)
 
 # COMMAND ----------
 
@@ -410,7 +431,7 @@ ax.set_title("Deep Learning Experiments — Validation RMSE")
 ax.invert_yaxis()
 plt.tight_layout()
 plt.savefig("/tmp/dl_experiments_comparison.png", dpi=100)
-plt.show()
+display(fig)
 
 # COMMAND ----------
 

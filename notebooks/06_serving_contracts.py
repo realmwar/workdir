@@ -31,6 +31,9 @@ import mlflow
 import mlflow.sklearn
 import mlflow.pyfunc
 
+mlflow.set_tracking_uri("databricks")
+mlflow.set_registry_uri("databricks-uc")
+
 CATALOG = "demo"
 print("setup OK")
 

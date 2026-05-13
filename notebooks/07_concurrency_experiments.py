@@ -16,6 +16,27 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 0) Install dependencies (Serverless)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Section 8 uses `aiohttp` for async HTTP calls and `nest_asyncio` so we can run an event loop
+# MAGIC inside the Databricks notebook (which already owns one). Neither is preinstalled on Serverless,
+# MAGIC so we `pip install` them inline and call `dbutils.library.restartPython()` so the kernel picks
+# MAGIC up the freshly installed wheels before any imports below run.
+
+# COMMAND ----------
+
+# MAGIC %pip install aiohttp nest_asyncio
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 1) Imports & setup
 
 # COMMAND ----------
@@ -425,7 +446,7 @@ for i, cat in enumerate(["io", "cpu", "ml"]):
 
 plt.tight_layout()
 plt.savefig("/tmp/concurrency_benchmarks.png", dpi=100)
-plt.show()
+display(fig)
 
 # COMMAND ----------
 

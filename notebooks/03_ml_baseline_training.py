@@ -116,9 +116,11 @@ from sklearn.metrics import (
     mean_absolute_percentage_error,
 )
 from sklearn.preprocessing import LabelEncoder
+from sklearn.base import clone
 
 import mlflow
 import mlflow.sklearn
+from mlflow.models import infer_signature
 
 print("imports OK")
 
@@ -400,8 +402,20 @@ def train_and_log(model, model_name, X_tr, y_tr, X_v, y_v, params=None):
         for k, v in val_metrics.items():
             mlflow.log_metric(f"val_{k}", v)
 
-        # Log the sklearn model artifact.
-        mlflow.sklearn.log_model(model, artifact_path="model")
+        # Build an MLflow model signature from the validation predictions. UC Model Registry
+        # requires every logged model to carry an input/output schema, and even outside UC the
+        # signature suppresses the "Model logged without a signature" warning and makes the
+        # artifact self-describing for downstream consumers (FastAPI, batch jobs, etc.).
+        signature = infer_signature(X_v, y_v_pred)
+        input_example = X_v.iloc[:5]
+
+        # Log the sklearn model artifact with signature + input example.
+        mlflow.sklearn.log_model(
+            model,
+            artifact_path="model",
+            signature=signature,
+            input_example=input_example,
+        )
 
         print(f"  [{model_name}]  val_rmse={val_metrics['rmse']:.2f}  val_r2={val_metrics['r2']:.4f}  val_mape={val_metrics['mape']:.4f}")
 
@@ -703,39 +717,68 @@ display(fig)
 # MAGIC %md
 # MAGIC ## 10) Ensemble: Voting Regressor (weighted average)
 # MAGIC
-# MAGIC Combines the three best tree-based models to demonstrate ensemble techniques.
+# MAGIC Combines the three best individual models from section 9 to demonstrate ensemble techniques.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC The voting regressor takes the three strongest tree-based models (RF, LightGBM, XGBoost) and
-# MAGIC averages their predictions. This is the simplest possible ensemble technique — no stacking, no
-# MAGIC weighting, just a plain mean — and it works because the underlying models make different kinds
+# MAGIC The voting regressor takes the three strongest individual models from section 9 (top-3 by validation
+# MAGIC RMSE) and averages their predictions. This is the simplest possible ensemble technique — no stacking,
+# MAGIC no weighting, just a plain mean — and it works because the underlying models make different kinds
 # MAGIC of mistakes. Where one model is biased low on a particular store, another is often biased high,
 # MAGIC and the average is closer to truth than any individual prediction.
 # MAGIC
-# MAGIC For a serious production setup we'd weight the models by validation performance or fit a stacking
+# MAGIC We deliberately pick the top-3 *dynamically* from the `results` dict instead of hardcoding a list,
+# MAGIC so the ensemble always reflects whichever three models actually performed best on this run. If we
+# MAGIC retrain on a different time window or add new features, the membership shifts automatically without
+# MAGIC us having to remember to update this cell.
+# MAGIC
+# MAGIC For a serious production setup we'd weight the members by validation performance or fit a stacking
 # MAGIC meta-model on top, but the uniform average is a clean demonstration of the ensemble idea and it
 # MAGIC almost always nudges the metrics a bit better than the best single model.
 
 # COMMAND ----------
 
-# Retrain top-3 for the ensemble (RF, LightGBM, XGBoost).
+# Pick the top-3 individual models by validation RMSE (exclude any ensemble entries that might
+# exist on re-runs of this section). VotingRegressor will refit fresh clones of each estimator
+# on the training set, so we use sklearn.clone to strip any prior fitted state and reset to the
+# original hyperparameters before averaging.
+_individual = {k: v for k, v in results.items() if k != "VotingEnsemble"}
+top3_names = pd.DataFrame(_individual).T.sort_values("rmse").head(3).index.tolist()
+
+all_fitted = {
+    "LinearRegression": lr,
+    "Ridge": ridge,
+    "Lasso": lasso,
+    "DecisionTree": dt,
+    "RandomForest": rf,
+    "GradientBoosting": gb,
+    "LightGBM": lgb_model,
+    "XGBoost": xgb_model,
+}
+
+# Short, sklearn-friendly tags for the VotingRegressor estimator list.
+_short_tag = {
+    "LinearRegression": "lr",
+    "Ridge": "ridge",
+    "Lasso": "lasso",
+    "DecisionTree": "dt",
+    "RandomForest": "rf",
+    "GradientBoosting": "gb",
+    "LightGBM": "lgb",
+    "XGBoost": "xgb",
+}
+
+print(f"Top-3 by validation RMSE → ensemble members: {top3_names}")
+
 ensemble = VotingRegressor(
-    estimators=[
-        ("rf", RandomForestRegressor(n_estimators=200, max_depth=16, min_samples_leaf=10, n_jobs=-1, random_state=42)),
-        ("lgb", lgb.LGBMRegressor(n_estimators=500, max_depth=8, learning_rate=0.05, num_leaves=63,
-                                   subsample=0.8, colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=1.0,
-                                   random_state=42, verbosity=-1)),
-        ("xgb", xgb.XGBRegressor(n_estimators=500, max_depth=8, learning_rate=0.05, subsample=0.8,
-                                   colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=1.0, tree_method="hist",
-                                   random_state=42, verbosity=0)),
-    ],
+    estimators=[(_short_tag[name], clone(all_fitted[name])) for name in top3_names],
     n_jobs=-1,
 )
+ensemble_run_name = "VotingEnsemble_" + "_".join(_short_tag[n] for n in top3_names)
 _, metrics_ens, run_id_ens = train_and_log(
-    ensemble, "VotingEnsemble_RF_LGB_XGB", X_train, y_train, X_val, y_val,
-    params={"ensemble_members": "RF+LightGBM+XGBoost", "strategy": "uniform_average"},
+    ensemble, ensemble_run_name, X_train, y_train, X_val, y_val,
+    params={"ensemble_members": "+".join(top3_names), "strategy": "uniform_average"},
 )
 results["VotingEnsemble"] = metrics_ens
 
@@ -884,6 +927,12 @@ if LOG_TO_UC_REGISTRY:
     # UC model registry uses three-level namespace: catalog.schema.model_name
     UC_MODEL_NAME = f"{CATALOG}.ml.rossmann_sales_champion"
 
+    # Build signature from the test-set predictions we just computed in section 11. UC enforces
+    # that every registered model carries an input/output schema — without it, log_model with
+    # registered_model_name raises MlflowException at registration time.
+    champion_signature = infer_signature(X_test, y_test_pred)
+    champion_input_example = X_test.iloc[:5]
+
     # Re-log the champion with its test metrics for a clean registry artifact.
     with mlflow.start_run(run_name=f"{champion_name}_champion_registration") as run:
         mlflow.log_param("champion_model", champion_name)
@@ -893,6 +942,8 @@ if LOG_TO_UC_REGISTRY:
             champion_model,
             artifact_path="champion_model",
             registered_model_name=UC_MODEL_NAME,
+            signature=champion_signature,
+            input_example=champion_input_example,
         )
         champion_run_id = run.info.run_id
 

@@ -16,6 +16,27 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 0) Install dependencies (Serverless)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Serverless ships with `numpy`, `pandas`, `sklearn`, `matplotlib`, and `mlflow`, but the gradient
+# MAGIC boosting libraries (`lightgbm`, `xgboost`) and TensorFlow are not preinstalled. We `pip install`
+# MAGIC them inline and then call `dbutils.library.restartPython()` so the kernel picks up the freshly
+# MAGIC installed wheels before any of the import cells below run.
+
+# COMMAND ----------
+
+# MAGIC %pip install lightgbm xgboost tensorflow
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 1) Imports & setup
 
 # COMMAND ----------
@@ -26,8 +47,6 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use("Agg")
 
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
@@ -46,10 +65,12 @@ CATALOG = "demo"
 try:
     _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
     _user = _ctx.userName().get()
-    EXPERIMENT_NAME = f"/Users/{_user}/mlflow_experiments/nyc_demand_forecasting"
+    EXPERIMENT_NAME = f"/Users/{_user}/nyc_demand_forecasting"
 except Exception:
-    EXPERIMENT_NAME = "/Shared/mlflow_experiments/nyc_demand_forecasting"
-    
+    EXPERIMENT_NAME = "/Shared/nyc_demand_forecasting"
+
+mlflow.set_tracking_uri("databricks")
+mlflow.set_registry_uri("databricks-uc")
 mlflow.set_experiment(EXPERIMENT_NAME)
 
 print("setup OK")
@@ -295,7 +316,7 @@ axes[1].invert_yaxis()
 
 plt.tight_layout()
 plt.savefig("/tmp/nyc_model_comparison.png", dpi=100)
-plt.show()
+display(fig)
 
 # COMMAND ----------
 
@@ -311,7 +332,7 @@ ax.set_title("LightGBM Feature Importance — NYC Demand")
 ax.set_xlabel("Importance")
 plt.tight_layout()
 plt.savefig("/tmp/nyc_feature_importance.png", dpi=100)
-plt.show()
+display(fig)
 
 # COMMAND ----------
 
