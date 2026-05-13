@@ -23,15 +23,16 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC The Serverless runtime ships with `numpy`, `pandas`, `sklearn`, `matplotlib`, and `mlflow`
-# MAGIC out of the box, but the two gradient boosting libraries we want to benchmark — `lightgbm`
-# MAGIC and `xgboost` — are not preinstalled. We `pip install` them inline, then call
-# MAGIC `dbutils.library.restartPython()` so the kernel picks up the freshly installed wheels
-# MAGIC before any of the import cells below run.
+# MAGIC Databricks Free / older Serverless images can ship with an MLflow version that fails while
+# MAGIC uploading Unity Catalog model artifacts (`S3UploadFailedError` / `AccessDenied`) during model
+# MAGIC registration. We pin MLflow to `2.22.0`, the version used by newer Serverless runtimes where
+# MAGIC UC Model Registry registration works correctly, and install the two boosting libraries that
+# MAGIC are not preinstalled (`lightgbm`, `xgboost`). The Python restart is required so every import
+# MAGIC below uses the upgraded MLflow client instead of the preloaded runtime copy.
 
 # COMMAND ----------
 
-# MAGIC %pip install lightgbm xgboost
+# MAGIC %pip install --upgrade "mlflow[databricks]==2.22.0" lightgbm xgboost
 
 # COMMAND ----------
 
@@ -82,8 +83,7 @@ print("experiment_name:", EXPERIMENT_NAME)
 
 # MAGIC %md
 # MAGIC The working set of libraries for the rest of the notebook. Pandas and NumPy carry the tabular
-# MAGIC work, matplotlib draws the charts (forced into the non-interactive `Agg` backend because we're
-# MAGIC inside Databricks, not a Jupyter window), and from sklearn we pull in the full spectrum of
+# MAGIC work, matplotlib draws the charts inline in Databricks, and from sklearn we pull in the full spectrum of
 # MAGIC regressors we want to benchmark side by side — plain linear regression, ridge and lasso for
 # MAGIC regularization, a single decision tree, random forest, gradient boosting, and a voting ensemble
 # MAGIC on top. MLflow is the recording layer that captures parameters, metrics, and model artifacts
@@ -123,6 +123,7 @@ import mlflow.sklearn
 from mlflow.models import infer_signature
 
 print("imports OK")
+print("MLflow version:", mlflow.__version__)
 
 # COMMAND ----------
 
