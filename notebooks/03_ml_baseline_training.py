@@ -78,8 +78,6 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use("Agg")
 
 from sklearn.model_selection import cross_val_score
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
@@ -308,6 +306,12 @@ print(f"Test  : {X_test.shape[0]:>8,} rows  ({mask_test.sum()/len(df)*100:.1f}%)
 # COMMAND ----------
 
 # Set the MLflow experiment; Databricks auto-creates it if missing.
+# Explicitly pin the tracking and registry URIs so the MLflow client doesn't try
+# to look them up via spark.conf — that lookup fails under Spark Connect on
+# Databricks Free (same failure mode we hit in section 1 for notebook.path).
+mlflow.set_tracking_uri("databricks")
+mlflow.set_registry_uri("databricks-uc")
+
 mlflow.set_experiment(EXPERIMENT_NAME)
 print(f"MLflow experiment: {EXPERIMENT_NAME}")
 
