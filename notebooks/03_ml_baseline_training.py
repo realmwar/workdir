@@ -48,9 +48,9 @@ CATALOG = "demo"
 try:
     _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
     _user = _ctx.userName().get()
-    EXPERIMENT_NAME = f"/Users/{_user}/mlflow_experiments/rossmann_baseline"
+    EXPERIMENT_NAME = f"/Users/{_user}/rossmann_baseline"
 except Exception:
-    EXPERIMENT_NAME = "/Shared/mlflow_experiments/rossmann_baseline"
+    EXPERIMENT_NAME = "/Shared/rossmann_baseline"
 
 print("catalog:", CATALOG)
 print("log_to_uc_registry:", LOG_TO_UC_REGISTRY)
@@ -182,7 +182,7 @@ axes[1].set_ylabel("Count")
 
 plt.tight_layout()
 plt.savefig("/tmp/rossmann_target_dist.png", dpi=100)
-plt.show()
+display(fig)
 
 # COMMAND ----------
 
@@ -674,7 +674,7 @@ axes[2].invert_yaxis()
 
 plt.tight_layout()
 plt.savefig("/tmp/rossmann_model_comparison.png", dpi=100)
-plt.show()
+display(fig)
 
 # COMMAND ----------
 
@@ -790,7 +790,7 @@ ax.set_title(f"Test set: {champion_name} — Actual vs Predicted")
 ax.legend()
 plt.tight_layout()
 plt.savefig("/tmp/rossmann_actual_vs_pred.png", dpi=100)
-plt.show()
+display(fig)
 
 # COMMAND ----------
 
@@ -821,7 +821,7 @@ if hasattr(champion_model, "feature_importances_"):
     ax.set_xlabel("Importance")
     plt.tight_layout()
     plt.savefig("/tmp/rossmann_feature_importance.png", dpi=100)
-    plt.show()
+    display(fig)
 elif hasattr(champion_model, "estimators_"):
     # VotingRegressor: show importances from the first estimator that has them.
     for name, est in champion_model.named_estimators_.items():
@@ -833,7 +833,7 @@ elif hasattr(champion_model, "estimators_"):
             ax.set_xlabel("Importance")
             plt.tight_layout()
             plt.savefig("/tmp/rossmann_feature_importance.png", dpi=100)
-            plt.show()
+            display(fig)
             break
 else:
     print("Champion model does not expose feature_importances_.")
