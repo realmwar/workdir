@@ -12,7 +12,6 @@
 # MAGIC
 # MAGIC **Constraints:**
 # MAGIC - No Spark DataFrame API — SQL for reads, pandas + Keras/TF for DL.
-# MAGIC - All code in English.
 
 # COMMAND ----------
 
@@ -29,7 +28,21 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This cell installs the DL-specific packages that are not guaranteed to exist on Databricks
+# MAGIC Serverless. TensorFlow is the training backend for the feedforward networks, and
+# MAGIC `tensorflow-model-optimization` is only needed later for the pruning experiment. Keeping the
+# MAGIC install at the top makes the rest of the notebook predictable.
+
+# COMMAND ----------
+
 # MAGIC %pip install tensorflow tensorflow-model-optimization
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC After `%pip install`, Databricks needs a Python restart before the newly installed wheels are
+# MAGIC visible to normal `import` statements. This is expected notebook behavior, not an error.
 
 # COMMAND ----------
 
@@ -39,6 +52,15 @@ dbutils.library.restartPython()
 
 # MAGIC %md
 # MAGIC ## 1) Imports & runtime config
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The imports set up the full deep learning workspace: pandas and NumPy for tabular data,
+# MAGIC matplotlib for inline training curves, TensorFlow/Keras for model definition, sklearn for
+# MAGIC preprocessing and metrics, and MLflow for experiment tracking. The experiment path follows the
+# MAGIC same Serverless-safe pattern as notebook 03, and the explicit MLflow URIs make sure Databricks
+# MAGIC tracking and Unity Catalog registry are used.
 
 # COMMAND ----------
 
@@ -78,6 +100,14 @@ print(f"GPUs available: {tf.config.list_physical_devices('GPU')}")
 
 # MAGIC %md
 # MAGIC ## 2) Load data & prepare features
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell turns the Rossmann gold mart into a neural-network-ready matrix. We keep the same target,
+# MAGIC feature exclusions, categorical encoding, and time-based train/validation/test split as notebook 03
+# MAGIC so the deep learning experiments are compared against the classical baselines on the same problem,
+# MAGIC not on a silently different dataset.
 
 # COMMAND ----------
 
@@ -126,6 +156,14 @@ print(f"Train: {X_train.shape}, Val: {X_val.shape}, Test: {X_test.shape}")
 
 # MAGIC %md
 # MAGIC ## 3) Helper utilities
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC These helpers keep the experiment cells small. `eval_metrics` gives every model the same regression
+# MAGIC scorecard, `build_fnn` creates a configurable feedforward network, and `train_nn_experiment` wraps
+# MAGIC the repeatable training loop: build, compile, fit, evaluate, log to MLflow, and return the artifacts
+# MAGIC we need for comparison.
 
 # COMMAND ----------
 
@@ -251,6 +289,13 @@ def train_nn_experiment(
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The first experiment is intentionally plain: ReLU activations, Adam optimizer, three hidden layers,
+# MAGIC and a moderate batch size. This gives us a clean deep learning baseline before changing architecture,
+# MAGIC optimizer, precision, or compression settings.
+
+# COMMAND ----------
+
 dl_results = {}
 
 model_1, val_1, test_1, hist_1 = train_nn_experiment(
@@ -263,6 +308,13 @@ model_1, val_1, test_1, hist_1 = train_nn_experiment(
     batch_size=512,
 )
 dl_results["FNN_baseline"] = {**val_1, "test_rmse": test_1["rmse"]}
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The training curves show whether the baseline network is learning smoothly or overfitting. Loss is
+# MAGIC the objective the optimizer minimizes, while MAE is easier to read in the original sales units.
+# MAGIC Plotting train and validation side by side makes the gap visible immediately.
 
 # COMMAND ----------
 
@@ -291,6 +343,13 @@ display(fig)
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This run increases both depth and width to test whether the Rossmann feature mart benefits from a
+# MAGIC larger neural network. The learning-rate scheduler is enabled because deeper networks are more
+# MAGIC sensitive to optimizer settings and often need the step size reduced once validation loss plateaus.
+
+# COMMAND ----------
+
 model_2, val_2, test_2, hist_2 = train_nn_experiment(
     name="FNN_deep_512_256_128_64",
     hidden_layers=[512, 256, 128, 64],
@@ -312,6 +371,13 @@ dl_results["FNN_deep"] = {**val_2, "test_rmse": test_2["rmse"]}
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Here the architecture stays fixed and only the activation function changes. That isolates the effect
+# MAGIC of non-linearity choice: sigmoid can saturate, tanh is centered around zero, and ReLU is the baseline
+# MAGIC from the first experiment.
+
+# COMMAND ----------
+
 for act_fn in ["sigmoid", "tanh"]:
     _, val_act, test_act, _ = train_nn_experiment(
         name=f"FNN_{act_fn}",
@@ -328,6 +394,13 @@ for act_fn in ["sigmoid", "tanh"]:
 
 # MAGIC %md
 # MAGIC ## 7) Experiment 4 — Optimizer comparison (SGD, RMSprop)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell keeps the ReLU architecture fixed and swaps the optimizer. SGD with momentum is the
+# MAGIC classical baseline, while RMSprop adapts learning rates per parameter. Comparing them against Adam
+# MAGIC shows whether optimizer choice matters more than network shape for this tabular task.
 
 # COMMAND ----------
 
@@ -351,6 +424,13 @@ for opt_name, lr in [("sgd", 1e-2), ("rmsprop", 1e-3)]:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Mixed precision is mainly a systems experiment: on GPU-backed runtimes it can speed up training and
+# MAGIC reduce memory pressure by using FP16 where safe. The model shape stays the same as the baseline so
+# MAGIC any difference is easier to attribute to precision policy rather than architecture.
+
+# COMMAND ----------
+
 model_mp, val_mp, test_mp, hist_mp = train_nn_experiment(
     name="FNN_mixed_precision_fp16",
     hidden_layers=[256, 128, 64],
@@ -369,6 +449,13 @@ dl_results["FNN_mixed_precision"] = {**val_mp, "test_rmse": test_mp["rmse"]}
 # MAGIC ## 9) Experiment 6 — Pruning exploration
 # MAGIC
 # MAGIC Demonstrate magnitude-based weight pruning to reduce model size.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Pruning explores model compression. We train a network while gradually forcing small-magnitude
+# MAGIC weights toward zero, then strip the pruning wrappers before logging the final Keras model. If the
+# MAGIC optional optimization package is unavailable, the notebook skips this experiment cleanly.
 
 # COMMAND ----------
 
@@ -417,9 +504,22 @@ except ImportError:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC All deep learning experiments have been logging their validation metrics into `dl_results`. This
+# MAGIC cell turns that dictionary into a sorted comparison table so the best neural-network configuration
+# MAGIC is visible before we compare it with the tree-based champion from notebook 03.
+
+# COMMAND ----------
+
 dl_comp = pd.DataFrame(dl_results).T.sort_values("rmse")
 dl_comp.index.name = "experiment"
 print(dl_comp.to_string())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The bar chart is the visual version of the comparison table. Sorting by validation RMSE keeps the
+# MAGIC strongest experiment at the top and makes the spread between configurations easy to scan.
 
 # COMMAND ----------
 
@@ -439,6 +539,13 @@ display(fig)
 # MAGIC ## 11) DL vs GBM comparison
 # MAGIC
 # MAGIC Compare the best DL model against the GBM champion from notebook 03.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This is the practical checkpoint: the best neural network is compared against the production-style
+# MAGIC predictions written by notebook 03. If the deep model does not beat the GBM champion, that is still
+# MAGIC a useful result because it shows that tabular boosting remains the stronger baseline for this use case.
 
 # COMMAND ----------
 
