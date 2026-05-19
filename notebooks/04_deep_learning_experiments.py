@@ -23,8 +23,8 @@
 # MAGIC %md
 # MAGIC Serverless ships with `numpy`, `pandas`, `sklearn`, `matplotlib`, and `mlflow`, but TensorFlow
 # MAGIC (and the optional `tensorflow-model-optimization` package used in section 9 for pruning) are
-# MAGIC not preinstalled. We pin TensorFlow and `protobuf` to compatible versions because newer protobuf
-# MAGIC releases remove `google.protobuf.service`, which Databricks/MLflow imports still expect.
+# MAGIC not preinstalled. We install the CPU TensorFlow wheel explicitly so `tf.keras` is present in the
+# MAGIC Serverless Python environment, and pin `protobuf` to avoid Databricks/MLflow import conflicts.
 
 # COMMAND ----------
 
@@ -32,11 +32,11 @@
 # MAGIC This cell installs the DL-specific packages that are not guaranteed to exist on Databricks
 # MAGIC Serverless. TensorFlow is the training backend for the feedforward networks, and
 # MAGIC `tensorflow-model-optimization` is only needed later for the pruning experiment. The explicit
-# MAGIC `protobuf` pin avoids the `cannot import name 'service' from 'google.protobuf'` import error.
+# MAGIC CPU wheel avoids a partial `tensorflow` namespace package where `keras` is missing.
 
 # COMMAND ----------
 
-# MAGIC %pip install "tensorflow==2.15.1" "tensorflow-model-optimization==0.8.0" "protobuf==4.25.3"
+# MAGIC %pip install --upgrade --force-reinstall "tensorflow-cpu==2.15.1" "keras==2.15.0" "tensorflow-model-optimization==0.8.0" "protobuf==4.25.3"
 
 # COMMAND ----------
 
@@ -72,7 +72,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import tensorflow as tf
-from tensorflow import keras
 from tensorflow.keras import layers, callbacks, optimizers, mixed_precision
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
@@ -92,6 +91,8 @@ except Exception:
 mlflow.set_tracking_uri("databricks")
 mlflow.set_registry_uri("databricks-uc")
 mlflow.set_experiment(EXPERIMENT_NAME)
+
+keras = tf.keras
 
 print(f"TensorFlow version: {tf.__version__}")
 print(f"GPUs available: {tf.config.list_physical_devices('GPU')}")
