@@ -220,9 +220,9 @@ def train_nn_experiment(
 
     # Select optimizer.
     opt_map = {
-        "adam": optimizers.Adam(learning_rate=lr),
-        "sgd": optimizers.SGD(learning_rate=lr, momentum=0.9),
-        "rmsprop": optimizers.RMSprop(learning_rate=lr),
+        "adam": optimizers.Adam(learning_rate=lr, clipnorm=1.0),
+        "sgd": optimizers.SGD(learning_rate=lr, momentum=0.9, clipnorm=1.0),
+        "rmsprop": optimizers.RMSprop(learning_rate=lr, clipnorm=1.0),
     }
     opt = opt_map.get(optimizer_name.lower(), optimizers.Adam(learning_rate=lr))
 
@@ -401,12 +401,13 @@ for act_fn in ["sigmoid", "tanh"]:
 
 # MAGIC %md
 # MAGIC This cell keeps the ReLU architecture fixed and swaps the optimizer. SGD with momentum is the
-# MAGIC classical baseline, while RMSprop adapts learning rates per parameter. Comparing them against Adam
-# MAGIC shows whether optimizer choice matters more than network shape for this tabular task.
+# MAGIC classical baseline, while RMSprop adapts learning rates per parameter. Because the target is raw
+# MAGIC sales and the loss is MSE, SGD needs a conservative learning rate; otherwise the gradients can
+# MAGIC explode and produce NaN predictions.
 
 # COMMAND ----------
 
-for opt_name, lr in [("sgd", 1e-2), ("rmsprop", 1e-3)]:
+for opt_name, lr in [("sgd", 1e-5), ("rmsprop", 1e-3)]:
     _, val_opt, test_opt, _ = train_nn_experiment(
         name=f"FNN_relu_{opt_name}",
         hidden_layers=[256, 128, 64],
