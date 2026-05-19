@@ -23,20 +23,20 @@
 # MAGIC %md
 # MAGIC Serverless ships with `numpy`, `pandas`, `sklearn`, `matplotlib`, and `mlflow`, but TensorFlow
 # MAGIC (and the optional `tensorflow-model-optimization` package used in section 9 for pruning) are
-# MAGIC not preinstalled. We `pip install` them inline and then call `dbutils.library.restartPython()`
-# MAGIC so the kernel picks up the freshly installed wheels before any of the import cells below run.
+# MAGIC not preinstalled. We pin TensorFlow and `protobuf` to compatible versions because newer protobuf
+# MAGIC releases remove `google.protobuf.service`, which Databricks/MLflow imports still expect.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC This cell installs the DL-specific packages that are not guaranteed to exist on Databricks
 # MAGIC Serverless. TensorFlow is the training backend for the feedforward networks, and
-# MAGIC `tensorflow-model-optimization` is only needed later for the pruning experiment. Keeping the
-# MAGIC install at the top makes the rest of the notebook predictable.
+# MAGIC `tensorflow-model-optimization` is only needed later for the pruning experiment. The explicit
+# MAGIC `protobuf` pin avoids the `cannot import name 'service' from 'google.protobuf'` import error.
 
 # COMMAND ----------
 
-# MAGIC %pip install tensorflow tensorflow-model-optimization
+# MAGIC %pip install "tensorflow==2.15.1" "tensorflow-model-optimization==0.8.0" "protobuf==4.25.3"
 
 # COMMAND ----------
 
