@@ -28,7 +28,20 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This cell installs the libraries that are not guaranteed to be present on Databricks Serverless.
+# MAGIC LightGBM and XGBoost cover the tree-based demand baselines, while TensorFlow is needed for the
+# MAGIC neural network experiment later in the notebook.
+
+# COMMAND ----------
+
 # MAGIC %pip install lightgbm xgboost tensorflow
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Databricks needs a Python restart after `%pip install` so the current notebook process can import
+# MAGIC the newly installed packages. After this restart, run the imports cell again before continuing.
 
 # COMMAND ----------
 
@@ -38,6 +51,13 @@ dbutils.library.restartPython()
 
 # MAGIC %md
 # MAGIC ## 1) Imports & setup
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell prepares the runtime for the NYC demand modeling work. Pandas and NumPy handle the local
+# MAGIC tabular data, matplotlib renders comparison charts, LightGBM/XGBoost/TensorFlow provide the model
+# MAGIC families, and MLflow tracks every run under a Serverless-safe experiment path.
 
 # COMMAND ----------
 
@@ -82,6 +102,13 @@ print("setup OK")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This is the handoff from the gold layer into model training. The table already contains the
+# MAGIC zone-hour features produced by earlier notebooks, so this cell only loads it into pandas and
+# MAGIC prints a small shape/head check before we start splitting and modeling.
+
+# COMMAND ----------
+
 df_raw = spark.sql(f"SELECT * FROM {CATALOG}.gold.nyc_demand_training_mart").toPandas()
 print(f"rows: {df_raw.shape[0]:,}  cols: {df_raw.shape[1]}")
 df_raw.head(3)
@@ -90,6 +117,13 @@ df_raw.head(3)
 
 # MAGIC %md
 # MAGIC ## 3) Feature preparation
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Here we define the prediction target and remove columns that should not become model inputs.
+# MAGIC `pickup_date` is kept out of the feature matrix because it is only used to create a temporal split,
+# MAGIC and the load timestamps are pipeline metadata rather than demand signals.
 
 # COMMAND ----------
 
@@ -112,6 +146,13 @@ print(f"{len(FEATURES)} features: {FEATURES}")
 
 # MAGIC %md
 # MAGIC ## 4) Time-based train / validation / test split
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Demand forecasting should be validated forward in time, not with a random split. This cell uses
+# MAGIC the earliest 70% of dates for training, the next 15% for validation, and the most recent 15% for
+# MAGIC the final test set so the evaluation resembles future demand prediction.
 
 # COMMAND ----------
 
@@ -139,6 +180,13 @@ print(f"Train: {X_train_raw.shape}  Val: {X_val_raw.shape}  Test: {X_test_raw.sh
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This helper keeps model evaluation consistent across LightGBM, XGBoost, and the neural network.
+# MAGIC Every model gets the same regression scorecard: MSE/RMSE for error magnitude, MAE for average
+# MAGIC absolute miss, R² for explained variance, and MAPE where the true value is non-zero.
+
+# COMMAND ----------
+
 def eval_metrics(y_true, y_pred):
     """Compute standard regression metrics."""
     mse  = mean_squared_error(y_true, y_pred)
@@ -153,6 +201,13 @@ def eval_metrics(y_true, y_pred):
 
 # MAGIC %md
 # MAGIC ## 6) Model 1: LightGBM baseline
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC LightGBM is the first serious baseline for the NYC zone-hour demand problem. It works well on
+# MAGIC tabular data, handles non-linear interactions without manual feature crosses, and trains quickly
+# MAGIC enough to be practical inside a notebook experiment.
 
 # COMMAND ----------
 
@@ -203,6 +258,13 @@ print(f"  [LightGBM] val_rmse={val_lgb['rmse']:.2f}  val_r2={val_lgb['r2']:.4f}"
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC XGBoost gives us a second gradient boosting implementation to compare against LightGBM. The setup is
+# MAGIC intentionally close to the LightGBM run so the comparison is mostly about the algorithm and training
+# MAGIC behavior, not a completely different feature set or validation strategy.
+
+# COMMAND ----------
+
 xgb_model = xgb.XGBRegressor(
     n_estimators=500,
     max_depth=8,
@@ -238,6 +300,13 @@ print(f"  [XGBoost] val_rmse={val_xgb['rmse']:.2f}  val_r2={val_xgb['r2']:.4f}")
 
 # MAGIC %md
 # MAGIC ## 8) Model 3: Feedforward Neural Network (FNN)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The neural network experiment tests whether a simple dense model can compete with the tree-based
+# MAGIC baselines on the same gold mart. Unlike boosted trees, the FNN needs standardized inputs so the
+# MAGIC optimizer sees features on comparable scales.
 
 # COMMAND ----------
 
@@ -297,9 +366,22 @@ print(f"  [FNN] val_rmse={val_nn['rmse']:.2f}  val_r2={val_nn['r2']:.4f}")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The three model runs have been collecting validation metrics in `results`. This cell turns that
+# MAGIC dictionary into a sorted comparison table so the current champion is selected from validation
+# MAGIC performance rather than from preference for a particular model family.
+
+# COMMAND ----------
+
 comp_df = pd.DataFrame(results).T.sort_values("rmse")
 comp_df.index.name = "model"
 print(comp_df.to_string())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This chart is the visual version of the comparison table. RMSE shows the absolute demand error,
+# MAGIC while R² shows how much of the variation in zone-hour trip demand each model explains.
 
 # COMMAND ----------
 
@@ -325,6 +407,13 @@ display(fig)
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Feature importance is a quick sanity check for the tree-based demand model. If temporal, location,
+# MAGIC and lag-style features dominate, the model is likely using the intended demand signals rather than
+# MAGIC leaning on accidental metadata.
+
+# COMMAND ----------
+
 fi = pd.Series(lgb_model.feature_importances_, index=FEATURES).sort_values(ascending=True)
 fig, ax = plt.subplots(figsize=(8, max(5, len(fi) * 0.4)))
 fi.plot.barh(ax=ax, color="teal", edgecolor="k")
@@ -338,6 +427,13 @@ display(fig)
 
 # MAGIC %md
 # MAGIC ## 11) Register best model in UC Model Registry
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell promotes the best validation model into the Unity Catalog Model Registry. The champion
+# MAGIC can be LightGBM, XGBoost, or the FNN; we map the selected name back to the fitted object, log the
+# MAGIC final test metrics, and register it under the stable `demo.ml.nyc_demand_champion` name.
 
 # COMMAND ----------
 
@@ -376,6 +472,13 @@ print(f"Registered: {UC_MODEL_NAME}")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC After selecting the champion, we persist its test-set predictions as a serving and dashboard table.
+# MAGIC The table keeps the original zone-hour keys, the actual trip count, the prediction, the residual,
+# MAGIC the model name, and a timestamp so downstream consumers do not have to recompute these fields.
+
+# COMMAND ----------
+
 # Use champion predictions on the test set.
 y_pred_champion = (
     y_test_lgb if champion_name == "LightGBM"
@@ -405,6 +508,12 @@ print(f"Predictions written: {CATALOG}.ml.nyc_demand_predictions — {row_count:
 
 # MAGIC %md
 # MAGIC ## 13) Audit snapshot
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The audit snapshot records the row count of the predictions table after this notebook writes it.
+# MAGIC That gives us a simple pipeline-health breadcrumb for later dashboarding and job monitoring.
 
 # COMMAND ----------
 
