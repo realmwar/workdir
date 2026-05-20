@@ -22,20 +22,21 @@
 
 # MAGIC %md
 # MAGIC Serverless ships with `numpy`, `pandas`, `sklearn`, `matplotlib`, and `mlflow`, but the gradient
-# MAGIC boosting libraries (`lightgbm`, `xgboost`) and TensorFlow are not preinstalled. We `pip install`
-# MAGIC them inline and then call `dbutils.library.restartPython()` so the kernel picks up the freshly
-# MAGIC installed wheels before any of the import cells below run.
+# MAGIC boosting libraries (`lightgbm`, `xgboost`) and TensorFlow are not preinstalled. We pin TensorFlow,
+# MAGIC Keras, and `protobuf` to a compatible combination because newer protobuf releases break the MLflow
+# MAGIC import path on Databricks with `cannot import name 'service' from 'google.protobuf'`.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC This cell installs the libraries that are not guaranteed to be present on Databricks Serverless.
 # MAGIC LightGBM and XGBoost cover the tree-based demand baselines, while TensorFlow is needed for the
-# MAGIC neural network experiment later in the notebook.
+# MAGIC neural network experiment later in the notebook. The explicit `protobuf` pin avoids the MLflow
+# MAGIC import error we already hit in the Rossmann DL notebook.
 
 # COMMAND ----------
 
-# MAGIC %pip install lightgbm xgboost tensorflow
+# MAGIC %pip install --upgrade --force-reinstall "lightgbm" "xgboost" "tensorflow==2.15.1" "keras==2.15.0" "protobuf==4.25.3"
 
 # COMMAND ----------
 
@@ -74,7 +75,6 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, m
 import lightgbm as lgb
 import xgboost as xgb
 import tensorflow as tf
-from tensorflow import keras
 from tensorflow.keras import layers, callbacks, optimizers
 
 import mlflow
@@ -92,6 +92,8 @@ except Exception:
 mlflow.set_tracking_uri("databricks")
 mlflow.set_registry_uri("databricks-uc")
 mlflow.set_experiment(EXPERIMENT_NAME)
+
+keras = tf.keras
 
 print("setup OK")
 
