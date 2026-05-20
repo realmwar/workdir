@@ -84,6 +84,7 @@ from tensorflow.keras import layers, callbacks, optimizers
 import mlflow
 import mlflow.sklearn
 import mlflow.keras
+from mlflow.models import infer_signature
 
 CATALOG = "demo"
 try:
@@ -454,20 +455,33 @@ UC_MODEL_NAME = f"{CATALOG}.ml.nyc_demand_champion"
 
 with mlflow.start_run(run_name=f"NYC_{champion_name}_champion_registration"):
     mlflow.log_param("champion_model", champion_name)
-    test_m = eval_metrics(y_test, [y_test_lgb, y_test_xgb, y_test_nn][[
-        list(comp_df.index).index(champion_name)
-    ]][0] if False else (
+    champion_test_pred = (
         y_test_lgb if champion_name == "LightGBM"
         else y_test_xgb if champion_name == "XGBoost"
         else y_test_nn
-    ))
+    )
+    test_m = eval_metrics(y_test, champion_test_pred)
+    champion_signature = infer_signature(
+        X_test_nn if champion_name == "FNN" else X_test_raw,
+        champion_test_pred,
+    )
     for k, v in test_m.items():
         mlflow.log_metric(f"test_{k}", v)
 
     if isinstance(champion, keras.Model):
-        mlflow.keras.log_model(champion, artifact_path="champion_model", registered_model_name=UC_MODEL_NAME)
+        mlflow.keras.log_model(
+            champion,
+            artifact_path="champion_model",
+            registered_model_name=UC_MODEL_NAME,
+            signature=champion_signature,
+        )
     else:
-        mlflow.sklearn.log_model(champion, artifact_path="champion_model", registered_model_name=UC_MODEL_NAME)
+        mlflow.sklearn.log_model(
+            champion,
+            artifact_path="champion_model",
+            registered_model_name=UC_MODEL_NAME,
+            signature=champion_signature,
+        )
 
 print(f"Registered: {UC_MODEL_NAME}")
 
