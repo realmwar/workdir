@@ -28,7 +28,20 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This install cell adds the two async-specific libraries used later in the notebook. `aiohttp`
+# MAGIC gives us non-blocking HTTP calls, and `nest_asyncio` lets a Databricks notebook reuse its already
+# MAGIC running event loop when we demonstrate asyncio patterns.
+
+# COMMAND ----------
+
 # MAGIC %pip install aiohttp nest_asyncio
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC After `%pip install`, Databricks needs a Python restart before the new packages can be imported
+# MAGIC like normal modules in the next cells.
 
 # COMMAND ----------
 
@@ -38,6 +51,12 @@ dbutils.library.restartPython()
 
 # MAGIC %md
 # MAGIC ## 1) Imports & setup
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell gathers the standard-library building blocks for threads, processes, queues, and asyncio,
+# MAGIC plus NumPy and pandas for small synthetic workloads and benchmark summaries.
 
 # COMMAND ----------
 
@@ -72,6 +91,13 @@ import pandas as pd
 
 # MAGIC %md
 # MAGIC ## 3) Simulating workloads
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC These helpers create repeatable fake workloads for the concurrency experiments. Instead of tying
+# MAGIC the notebook to a real API or production model, we simulate I/O waits, CPU-heavy loops, and chunked
+# MAGIC batch predictions so the behavior of each concurrency primitive is easy to observe.
 
 # COMMAND ----------
 
@@ -115,6 +141,13 @@ def batch_predict_chunk(chunk_data):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The first experiment compares ordinary sequential execution with a thread pool on an I/O-bound
+# MAGIC workload. Because the work spends most of its time waiting, threads should overlap those waits and
+# MAGIC deliver a visible speedup.
+
+# COMMAND ----------
+
 N_TASKS = 20
 
 # --- Sequential ---
@@ -138,6 +171,12 @@ print(f"Speedup: {seq_time / thread_time:.1f}x")
 
 # MAGIC %md
 # MAGIC ## 5) Experiment 2: Sequential vs ProcessPoolExecutor (CPU-bound)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This experiment switches to CPU-heavy work to show the opposite pattern: threads do not help much
+# MAGIC because of the GIL, while separate processes can run in parallel on multiple cores.
 
 # COMMAND ----------
 
@@ -172,6 +211,12 @@ print(f"Process speedup: {cpu_seq_time / cpu_proc_time:.1f}x")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This cell translates the concurrency discussion into an ML pipeline pattern: split a large batch
+# MAGIC of prediction inputs into chunks and compare sequential inference with parallel chunk processing.
+
+# COMMAND ----------
+
 # Simulate a large prediction dataset split into chunks.
 total_rows = 100_000
 chunk_size = 10_000
@@ -201,6 +246,12 @@ print(f"Speedup: {seq_pred_time / par_pred_time:.1f}x")
 
 # MAGIC %md
 # MAGIC ### 7a) Lock — protecting shared state
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC A lock is the simplest synchronization primitive for shared mutable state. This example uses a
+# MAGIC shared counter to show how a critical section prevents race conditions during concurrent increments.
 
 # COMMAND ----------
 
@@ -244,6 +295,12 @@ print(f"Thread-safe counter: {counter.value} (expected 100)")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC A semaphore limits how many workers can enter a code region at once. That maps naturally to
+# MAGIC real-world throttling scenarios such as outbound API calls or scarce shared resources.
+
+# COMMAND ----------
+
 # Semaphore limits how many threads can access a resource simultaneously.
 # Use case: limiting concurrent API connections to avoid throttling.
 semaphore = threading.Semaphore(3)  # Max 3 concurrent workers.
@@ -269,6 +326,12 @@ print(f"Max concurrent threads observed: {max(active_count)}")
 
 # MAGIC %md
 # MAGIC ### 7c) Condition — producer/consumer pattern
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Conditions coordinate threads when one side needs to wait for a state change. Here the consumer
+# MAGIC sleeps until the producer notifies it that new data has been placed into the shared buffer.
 
 # COMMAND ----------
 
@@ -323,6 +386,13 @@ print(f"Consumed: {consumer_results}")
 
 # MAGIC %md
 # MAGIC ## 8) Asyncio patterns for asynchronous operations
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This section demonstrates asynchronous I/O with coroutines. The example is intentionally written
+# MAGIC like a mini serving client: build a batch of payloads, send them concurrently, and collect all
+# MAGIC responses without blocking one request on another.
 
 # COMMAND ----------
 
@@ -383,6 +453,13 @@ except Exception as e:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Processes do not share Python objects by default, so shared memory needs explicit primitives.
+# MAGIC This example writes into a synchronized multiprocessing array from child processes to show how
+# MAGIC cross-process state can still be coordinated safely.
+
+# COMMAND ----------
+
 def worker_shared_mem(shared_array, index, value):
     """Write to a shared memory array from a child process.
 
@@ -411,6 +488,12 @@ print(f"Shared memory array: {list(shared_arr)}")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The summary table consolidates the timing measurements from the earlier experiments into one place.
+# MAGIC Grouping the results by workload category makes the speedup patterns easier to compare side by side.
+
+# COMMAND ----------
+
 benchmark = pd.DataFrame({
     "experiment": [
         "I/O Sequential", "I/O ThreadPool",
@@ -430,6 +513,13 @@ benchmark["speedup_vs_sequential"] = benchmark.groupby("category")["time_seconds
 )
 
 print(benchmark.to_string(index=False))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The final chart is a compact visual summary of the notebook: I/O, CPU, and ML-style workloads each
+# MAGIC get their own panel so the trade-offs between sequential, threaded, and process-based execution are
+# MAGIC easy to scan.
 
 # COMMAND ----------
 

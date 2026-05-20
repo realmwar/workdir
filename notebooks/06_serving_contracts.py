@@ -16,7 +16,34 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 0) Install dependencies (Serverless)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Databricks Free can ship an older MLflow build that is unreliable with Unity Catalog model
+# MAGIC operations. We upgrade MLflow to the same Databricks-compatible version already needed in the
+# MAGIC training notebooks so registry model loading behaves consistently here as well.
+
+# COMMAND ----------
+
+# MAGIC %pip install --upgrade --force-reinstall "mlflow[databricks]==2.22.0"
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 1) Imports & setup
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell prepares the batch inference runtime. Pandas carries the serving tables locally,
+# MAGIC MLflow loads champion models from the registry, and the explicit Databricks tracking/registry URIs
+# MAGIC make sure model resolution happens against the workspace tracking server and Unity Catalog registry.
 
 # COMMAND ----------
 
@@ -44,6 +71,12 @@ print("setup OK")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The serving outputs from this notebook are written into `demo.serving`. Creating the schema
+# MAGIC defensively here lets the notebook run in isolation without depending on earlier manual setup.
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC CREATE SCHEMA IF NOT EXISTS demo.serving;
 
@@ -51,6 +84,13 @@ print("setup OK")
 
 # MAGIC %md
 # MAGIC ## 3) Load champion models from UC Model Registry
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC We first try to load the Rossmann champion from the Unity Catalog model registry. If that lookup
+# MAGIC fails, the notebook falls back to the latest champion-registration run artifact so batch inference
+# MAGIC can still proceed while the registry is being debugged or repopulated.
 
 # COMMAND ----------
 
@@ -73,6 +113,12 @@ except Exception as e:
         print(f"Loaded from run: {runs.iloc[0].run_id}")
     else:
         raise RuntimeError("No Rossmann champion model found.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The NYC demand champion follows the same pattern as Rossmann: prefer the stable registry URI, but
+# MAGIC fall back to the latest matching MLflow run artifact if the registry entry is unavailable.
 
 # COMMAND ----------
 
@@ -102,6 +148,13 @@ except Exception as e:
 # MAGIC
 # MAGIC Each serving mart has a strict set of expected input columns. We validate
 # MAGIC them before inference to enforce the contract and catch schema drift early.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell defines the serving contracts explicitly. The input schemas describe the exact feature
+# MAGIC columns each champion expects, the output schemas document what downstream systems will receive,
+# MAGIC and `validate_schema` is the guard rail that catches missing columns before inference starts.
 
 # COMMAND ----------
 
@@ -154,11 +207,24 @@ def validate_schema(df, expected_cols, name):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC We load the Rossmann serving mart from the gold layer, validate that it matches the expected input
+# MAGIC contract, and print a quick row-count sanity check before any prediction code runs.
+
+# COMMAND ----------
+
 # Load the serving mart.
 rossmann_serving = spark.sql(f"SELECT * FROM {CATALOG}.gold.rossmann_serving_mart").toPandas()
 print(f"Rossmann serving mart: {rossmann_serving.shape[0]:,} rows")
 
 validate_schema(rossmann_serving, ROSSMANN_INPUT_SCHEMA, "rossmann_serving")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell prepares Rossmann features exactly the way the trained model expects them, runs batch
+# MAGIC inference, and assembles a serving-friendly output table with identifiers, predictions, model
+# MAGIC metadata, and the inference timestamp.
 
 # COMMAND ----------
 
@@ -196,6 +262,12 @@ print(out_ross.head(3))
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC After local inference is complete, the Rossmann predictions are written back into Unity Catalog.
+# MAGIC The temp view bridge keeps the write path simple while still ending with a managed serving table.
+
+# COMMAND ----------
+
 # Persist to serving schema.
 spark_ross = spark.createDataFrame(out_ross)
 spark_ross.createOrReplaceTempView("tmp_rossmann_serving_preds")
@@ -215,10 +287,22 @@ print(f"Written to {CATALOG}.serving.rossmann_predictions — {cnt:,} rows")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The NYC serving mart is loaded from the latest gold serving table and validated against its input
+# MAGIC contract before predictions are produced.
+
+# COMMAND ----------
+
 nyc_serving = spark.sql(f"SELECT * FROM {CATALOG}.gold.nyc_serving_latest_zone_hour_mart").toPandas()
 print(f"NYC serving mart: {nyc_serving.shape[0]:,} rows")
 
 validate_schema(nyc_serving, NYC_INPUT_SCHEMA, "nyc_serving")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell prepares the NYC serving features, runs the champion demand model, and builds a tidy
+# MAGIC output dataframe with zone-hour keys, predicted trip counts, model metadata, and inference time.
 
 # COMMAND ----------
 
@@ -243,6 +327,12 @@ print(out_nyc.head(3))
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The NYC predictions are persisted into the serving schema so downstream APIs, dashboards, and QA
+# MAGIC checks all read from the same contract table.
+
+# COMMAND ----------
+
 spark_nyc = spark.createDataFrame(out_nyc)
 spark_nyc.createOrReplaceTempView("tmp_nyc_serving_preds")
 
@@ -261,6 +351,12 @@ print(f"Written to {CATALOG}.serving.nyc_demand_predictions — {cnt:,} rows")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The contract registry is extended with the two serving output tables created above. This keeps the
+# MAGIC project-wide catalog of data contracts in sync with the actual assets now available to consumers.
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC -- Extend the contract registry with serving prediction tables.
 # MAGIC INSERT INTO demo.gold.contract_registry_mart
@@ -274,6 +370,12 @@ print(f"Written to {CATALOG}.serving.nyc_demand_predictions — {cnt:,} rows")
 
 # MAGIC %md
 # MAGIC ## 8) Serving audit snapshot
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The audit snapshot records row counts for the newly written serving tables. These lightweight
+# MAGIC inserts give us a simple operational breadcrumb for dashboards and job monitoring.
 
 # COMMAND ----------
 

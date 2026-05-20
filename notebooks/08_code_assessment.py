@@ -22,6 +22,13 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This cell loads the standard tools we need for the rest of the notebook: timers and profilers for
+# MAGIC performance inspection, core container types from the standard library, typing helpers for cleaner
+# MAGIC examples, and NumPy/pandas for generating realistic benchmark data.
+
+# COMMAND ----------
+
 import time
 import cProfile
 import pstats
@@ -57,6 +64,13 @@ import pandas as pd
 
 # MAGIC %md
 # MAGIC ## 3) Basic data structures: Lists, Dicts, Sets
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The first executable section compares the practical behavior of Python’s built-in data structures.
+# MAGIC Rather than only listing complexity classes, we run tiny benchmarks that make the O(1) versus O(n)
+# MAGIC differences visible in a concrete way.
 
 # COMMAND ----------
 
@@ -103,6 +117,13 @@ print(f"  Union: {len(union)}, Intersection: {len(intersect)}, Difference: {len(
 
 # MAGIC %md
 # MAGIC ## 4) Sorting algorithms
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This cell implements a small sorting toolbox from scratch, then benchmarks each algorithm on the
+# MAGIC same synthetic dataset. That lets us compare the educational quadratic algorithms against the
+# MAGIC divide-and-conquer approaches and Python’s built-in sorter.
 
 # COMMAND ----------
 
@@ -207,6 +228,12 @@ for name, func in [("bubble_sort", bubble_sort), ("insertion_sort", insertion_so
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The search section pairs implementation with measurement. Linear search is simple and works on any
+# MAGIC list, while binary search trades that flexibility for logarithmic performance on sorted data.
+
+# COMMAND ----------
+
 def linear_search(arr, target):
     """Linear search — O(n) time, O(1) space.
 
@@ -267,6 +294,13 @@ print(f"Speedup: {linear_time / binary_time:.1f}x")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC This custom hash table makes the usual dictionary behavior explicit. By writing a tiny separate-
+# MAGIC chaining implementation ourselves, we can connect the abstract complexity discussion to real insert,
+# MAGIC lookup, and delete operations.
+
+# COMMAND ----------
+
 class HashTable:
     """Simple hash table with separate chaining for collision resolution.
 
@@ -324,6 +358,13 @@ print(f"After delete: get('key_50'): {ht.get('key_50', 'NOT FOUND')}")
 
 # MAGIC %md
 # MAGIC ### 6b) Binary Search Tree (BST)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The BST example shows an ordered tree structure where lookup and insert are efficient on average,
+# MAGIC but can degrade badly when the tree becomes unbalanced. The in-order traversal also makes the sorted
+# MAGIC nature of the structure easy to verify.
 
 # COMMAND ----------
 
@@ -413,6 +454,12 @@ print(f"Inorder traversal (sorted): {bst.inorder()}")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Priority queues are a common systems primitive for scheduling. This example wraps Python’s heap
+# MAGIC implementation into a small class so the behavior reads like a task scheduler instead of raw tuples.
+
+# COMMAND ----------
+
 class PriorityQueue:
     """Min-heap priority queue — O(log n) push/pop, O(1) peek.
 
@@ -464,6 +511,12 @@ while not pq.is_empty:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC A deque is optimized for pushing and popping at both ends, which makes it a natural fit for queueing
+# MAGIC and sliding-window problems. The small demo below shows both behaviors in one place.
+
+# COMMAND ----------
+
 # collections.deque: O(1) append/pop from both ends (vs O(n) for list.insert(0)).
 dq = deque(maxlen=5)
 for i in range(8):
@@ -491,6 +544,13 @@ for val in [10, 20, 30, 40, 50]:
 
 # MAGIC %md
 # MAGIC ## 7) Code Profiling
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Profiling moves the discussion from theoretical complexity to actual runtime hotspots. This helper
+# MAGIC wraps `cProfile`, prints the most expensive calls, and then applies it to one of the algorithms we
+# MAGIC implemented earlier.
 
 # COMMAND ----------
 
@@ -522,6 +582,13 @@ _ = profile_function(quicksort, large_data)
 
 # MAGIC %md
 # MAGIC ### 8a) Extract Method + Single Responsibility
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC This refactoring example starts with a monolithic function that cleans data, engineers features,
+# MAGIC and predicts in one block. The “after” version separates those responsibilities into focused steps
+# MAGIC so each function becomes easier to test, reuse, and reason about.
 
 # COMMAND ----------
 
@@ -572,6 +639,12 @@ print(f"After:  {process_data_good(sample)}")
 
 # MAGIC %md
 # MAGIC ### 8b) Strategy pattern — replacing conditionals with polymorphism
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The second refactoring example replaces a growing `if/elif` tree with separate strategy objects.
+# MAGIC That makes it easier to add new normalization methods without editing one fragile central function.
 
 # COMMAND ----------
 
@@ -632,6 +705,13 @@ for name, norm in normalizers.items():
 
 # MAGIC %md
 # MAGIC ### 8c) Singleton pattern — configuration manager
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The singleton example demonstrates one of the classic design patterns often discussed in software
+# MAGIC engineering interviews and code reviews. Whether or not we would always choose it in production,
+# MAGIC it is useful to understand how a shared configuration object can enforce a single instance.
 
 # COMMAND ----------
 
