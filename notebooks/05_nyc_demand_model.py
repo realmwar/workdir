@@ -21,22 +21,22 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Serverless ships with `numpy`, `pandas`, `sklearn`, `matplotlib`, and `mlflow`, but the gradient
-# MAGIC boosting libraries (`lightgbm`, `xgboost`) and TensorFlow are not preinstalled. The TensorFlow
-# MAGIC stack is installed exactly the same way as in notebook 04 because that combination is already
-# MAGIC verified to work on this Databricks setup.
+# MAGIC Serverless ships with `numpy`, `pandas`, `sklearn`, and `matplotlib`, but the gradient boosting
+# MAGIC libraries (`lightgbm`, `xgboost`) and TensorFlow are not preinstalled. We also upgrade MLflow to
+# MAGIC the same working Databricks-compatible version we already needed earlier for Unity Catalog model
+# MAGIC registration on Databricks Free.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC This cell installs the libraries that are not guaranteed to be present on Databricks Serverless.
-# MAGIC We keep the TensorFlow/Keras/protobuf combination aligned with notebook 04, then install
-# MAGIC LightGBM and XGBoost separately so the boosting packages do not interfere with the TensorFlow
-# MAGIC resolver path.
+# MAGIC We keep the TensorFlow/Keras/protobuf combination aligned with notebook 04, upgrade MLflow to the
+# MAGIC UC-registration-safe version, then install LightGBM and XGBoost separately so the boosting packages
+# MAGIC do not interfere with the TensorFlow resolver path.
 
 # COMMAND ----------
 
-# MAGIC %pip install --upgrade --force-reinstall "tensorflow==2.15.1" "keras==2.15.0" "tensorflow-model-optimization==0.8.0" "protobuf==4.25.3"
+# MAGIC %pip install --upgrade --force-reinstall "mlflow[databricks]==2.22.0" "tensorflow==2.15.1" "keras==2.15.0" "tensorflow-model-optimization==0.8.0" "protobuf==4.25.3"
 
 # COMMAND ----------
 
