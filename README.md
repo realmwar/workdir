@@ -8,6 +8,8 @@ End-to-end machine learning pipeline on **Databricks Free Account** (Python + SQ
 workdir/
 ├── databricks.yml                        # Databricks bundle config
 ├── README.md                             # This file
+├── docker-compose.yml                    # Local FastAPI + Streamlit runtime
+├── .env.example                          # Non-secret Databricks/local serving config template
 ├── notebooks/
 │   ├── 00_uc_bootstrap_and_data_intake.py  # UC schemas, raw data intake, landing/bronze
 │   ├── 01_silver_transformations.py        # Clean/enrich bronze → silver feature tables
@@ -24,9 +26,12 @@ workdir/
 │   │   ├── models.py                       #   Model loading (Factory + Strategy patterns)
 │   │   ├── services.py                     #   Prediction services (OOP, DI)
 │   │   ├── schemas.py                      #   Pydantic request/response schemas
+│   │   ├── Dockerfile                      #   Container image for local serving
 │   │   └── requirements.txt                #   Python dependencies
 │   └── frontend/                           # Streamlit frontend
 │       ├── app.py                          #   Main app
+│       ├── Dockerfile                      #   Container image for local UI
+│       ├── requirements.txt                #   Python dependencies
 │       └── pages/
 │           ├── 1_rossmann_prediction.py    #   Store sales prediction page
 │           ├── 2_nyc_demand_heatmap.py     #   Zone-hour demand visualization
@@ -64,6 +69,14 @@ workdir/
         Streamlit Frontend
 ```
 
+## Current Status
+
+Notebooks `00` through `08` have been executed successfully in Databricks.
+
+The core E2E ML pipeline path is `00` → `01` → `02` → `03` → `04` → `05` → `06`. It builds the UC medallion data layers, trains/registers Rossmann and NYC models, and writes batch inference outputs into `demo.serving`.
+
+Notebooks `07_concurrency_experiments.py` and `08_code_assessment.py` are standalone competency labs. They support the project evidence matrix with concurrency, algorithms, profiling, refactoring, and design-pattern examples, but they are not required to produce serving predictions.
+
 ## Datasets
 
 | Dataset | Source | Role |
@@ -89,7 +102,7 @@ workdir/
 - Linear Regression, Ridge (L2), Lasso (L1)
 - Decision Tree, Random Forest, Gradient Boosting
 - LightGBM, XGBoost
-- Voting Ensemble (RF + LGB + XGB)
+- Voting Ensemble from the top-3 validation models
 - FNN (multiple architectures, activations, optimizers)
 - FNN with mixed precision (FP16) and pruning
 
@@ -102,7 +115,29 @@ workdir/
 ### Notebooks (Databricks)
 1. Import `workdir/` as a Databricks Repo or upload notebooks.
 2. Run notebooks in order: `00` → `01` → `02` → `03` → `04` → `05` → `06`.
-3. Notebooks `07` and `08` are standalone experiments.
+3. Run notebooks `07` and `08` separately when you want to review standalone competency evidence.
+
+### Docker Compose (local FastAPI + Streamlit)
+The local containers still load models from Databricks Unity Catalog, so valid Databricks credentials are required.
+
+```bash
+cd workdir
+cp .env.example .env
+# edit .env with DATABRICKS_HOST and DATABRICKS_TOKEN
+docker compose --env-file .env up --build
+```
+
+After startup:
+- FastAPI docs: `http://localhost:8000/docs`
+- FastAPI health: `http://localhost:8000/health`
+- Streamlit UI: `http://localhost:8501`
+
+The model URIs are configured through env vars:
+
+```bash
+ROSSMANN_MODEL_URI=models:/demo.ml.rossmann_sales_champion/3
+NYC_MODEL_URI=models:/demo.ml.nyc_demand_champion/2
+```
 
 ### FastAPI Backend (local)
 ```bash
@@ -113,7 +148,7 @@ uvicorn src.api.main:app --reload --port 8000
 
 ### Streamlit Frontend (local)
 ```bash
-pip install streamlit plotly requests
+pip install -r src/frontend/requirements.txt
 streamlit run src/frontend/app.py
 ```
 
@@ -125,7 +160,7 @@ databricks bundle deploy
 
 ## Competency Coverage
 
-Full coverage tracking is maintained in `docs/README_competency_jobs.md` with per-file coverage blocks mapped to every job and competency.
+Full coverage tracking is maintained in `docs/html/README_competency_jobs.html` with per-file coverage blocks mapped to every job and competency.
 
 ### Coverage Matrix
 

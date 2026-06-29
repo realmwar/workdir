@@ -8,6 +8,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import os
 
 st.set_page_config(page_title="Model Comparison", page_icon="📈", layout="wide")
 st.title("📈 Model Comparison Dashboard")
@@ -17,7 +18,7 @@ Compare performance metrics across all trained models (classical ML and deep lea
 Data is loaded from the MLflow experiment runs via the API or shown as demo data.
 """)
 
-API_BASE = st.sidebar.text_input("API Base URL", value="http://localhost:8000")
+API_BASE = st.sidebar.text_input("API Base URL", value=os.getenv("API_BASE_URL", "http://localhost:8000"))
 
 # ---------------------------------------------------------------------------
 # Demo data (mirrors what notebooks 03/04 produce).

@@ -45,7 +45,8 @@ class MLflowModelLoader(BaseModelLoader):
         return mlflow.pyfunc.load_model(model_uri)
 
     def predict(self, model: Any, features: pd.DataFrame) -> np.ndarray:
-        return model.predict(features).flatten()
+        aligned = align_to_model_signature(features, model)
+        return model.predict(aligned).flatten()
 
 
 class PickleModelLoader(BaseModelLoader):
@@ -59,6 +60,61 @@ class PickleModelLoader(BaseModelLoader):
 
     def predict(self, model: Any, features: pd.DataFrame) -> np.ndarray:
         return np.array(model.predict(features)).flatten()
+
+
+def align_to_model_signature(features: pd.DataFrame, model: Any) -> pd.DataFrame:
+    """Align request features to an MLflow pyfunc model signature before prediction.
+
+    This mirrors the serving notebook behavior: pyfunc models validate input dtypes
+    and column order before calling the underlying estimator. For column schemas we
+    add missing train-only columns with safe defaults, cast dtypes, and reorder.
+    For tensor schemas (typical Keras/FNN models), we coerce the supplied feature
+    matrix to numeric values and preserve the service-defined feature order.
+    """
+    metadata = getattr(model, "metadata", None)
+    if metadata is None:
+        return features
+
+    schema = metadata.get_input_schema()
+    if schema is None:
+        return features
+
+    aligned = features.copy()
+
+    if hasattr(schema, "is_tensor_spec") and schema.is_tensor_spec():
+        for col in aligned.columns:
+            aligned[col] = pd.to_numeric(aligned[col], errors="raise").astype("float64")
+        return aligned
+
+    expected_cols = []
+    for col_spec in schema.inputs:
+        col_name = col_spec.name
+        col_type = str(col_spec.type).lower()
+        expected_cols.append(col_name)
+
+        if col_name not in aligned.columns:
+            if col_type in ("integer", "long"):
+                aligned[col_name] = 0
+            elif col_type in ("float", "double"):
+                aligned[col_name] = 0.0
+            elif col_type == "boolean":
+                aligned[col_name] = False
+            elif col_type == "string":
+                aligned[col_name] = ""
+            else:
+                aligned[col_name] = 0.0
+            logger.info("Added missing model-signature column with default: %s", col_name)
+
+        if col_type in ("integer", "long"):
+            aligned[col_name] = pd.to_numeric(aligned[col_name], errors="raise").astype("int64")
+        elif col_type in ("float", "double"):
+            aligned[col_name] = pd.to_numeric(aligned[col_name], errors="raise").astype("float64")
+        elif col_type == "boolean":
+            aligned[col_name] = aligned[col_name].astype("bool")
+        elif col_type == "string":
+            aligned[col_name] = aligned[col_name].astype("string")
+
+    return aligned[expected_cols]
 
 
 # ---------------------------------------------------------------------------

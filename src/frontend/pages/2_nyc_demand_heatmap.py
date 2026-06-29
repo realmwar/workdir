@@ -8,11 +8,12 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import os
 
 st.set_page_config(page_title="NYC Demand Heatmap", page_icon="🚕", layout="wide")
 st.title("🚕 NYC Taxi Demand — Zone-Hour Heatmap")
 
-API_BASE = st.sidebar.text_input("API Base URL", value="http://localhost:8000")
+API_BASE = st.sidebar.text_input("API Base URL", value=os.getenv("API_BASE_URL", "http://localhost:8000"))
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Prediction Parameters")

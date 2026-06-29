@@ -14,6 +14,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import mlflow
 
 from .models import LoadedModel
 from .schemas import (
@@ -38,11 +39,16 @@ logger = logging.getLogger(__name__)
 # Model URIs — configurable via env vars for flexibility.
 # ---------------------------------------------------------------------------
 ROSSMANN_MODEL_URI = os.getenv(
-    "ROSSMANN_MODEL_URI", "models:/demo.ml.rossmann_sales_champion/1"
+    "ROSSMANN_MODEL_URI", "models:/demo.ml.rossmann_sales_champion/3"
 )
 NYC_MODEL_URI = os.getenv(
-    "NYC_MODEL_URI", "models:/demo.ml.nyc_demand_champion/1"
+    "NYC_MODEL_URI", "models:/demo.ml.nyc_demand_champion/2"
 )
+
+
+def _model_version_from_uri(model_uri: str, fallback: str = "unknown") -> str:
+    """Extract the trailing MLflow model version from models:/... URIs."""
+    return model_uri.rstrip("/").split("/")[-1] if "/" in model_uri else fallback
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +59,19 @@ async def lifespan(app: FastAPI):
     """Load models at startup and release on shutdown."""
     logger.info("Loading models...")
 
-    rossmann_model = LoadedModel("rossmann_sales_champion", "1", ROSSMANN_MODEL_URI)
-    nyc_model = LoadedModel("nyc_demand_champion", "1", NYC_MODEL_URI)
+    mlflow.set_tracking_uri("databricks")
+    mlflow.set_registry_uri("databricks-uc")
+
+    rossmann_model = LoadedModel(
+        "rossmann_sales_champion",
+        _model_version_from_uri(ROSSMANN_MODEL_URI),
+        ROSSMANN_MODEL_URI,
+    )
+    nyc_model = LoadedModel(
+        "nyc_demand_champion",
+        _model_version_from_uri(NYC_MODEL_URI),
+        NYC_MODEL_URI,
+    )
 
     try:
         rossmann_model.load()

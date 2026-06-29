@@ -1,9 +1,12 @@
 fastapi
 uvicorn[standard]
 pydantic>=2.0
-mlflow
+mlflow[databricks]==2.22.0
 numpy
 pandas
 scikit-learn
 lightgbm
 xgboost
+tensorflow==2.15.1
+keras==2.15.0
+protobuf==4.25.3

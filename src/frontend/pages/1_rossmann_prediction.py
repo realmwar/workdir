@@ -6,12 +6,13 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import os
 from datetime import datetime
 
 st.set_page_config(page_title="Rossmann Prediction", page_icon="🏪", layout="wide")
 st.title("🏪 Rossmann Store Sales Prediction")
 
-API_BASE = st.sidebar.text_input("API Base URL", value="http://localhost:8000")
+API_BASE = st.sidebar.text_input("API Base URL", value=os.getenv("API_BASE_URL", "http://localhost:8000"))
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Store Parameters")

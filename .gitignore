@@ -1,0 +1,13 @@
+.databricks/
+.git/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+notebooks/
+dashboards/
+jobs/

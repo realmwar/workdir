@@ -1,0 +1,29 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: src/api/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABRICKS_HOST: "${DATABRICKS_HOST:-}"
+      DATABRICKS_TOKEN: "${DATABRICKS_TOKEN:-}"
+      ROSSMANN_MODEL_URI: "${ROSSMANN_MODEL_URI:-models:/demo.ml.rossmann_sales_champion/3}"
+      NYC_MODEL_URI: "${NYC_MODEL_URI:-models:/demo.ml.nyc_demand_champion/2}"
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: src/frontend/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      API_BASE_URL: "${API_BASE_URL:-http://api:8000}"
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
