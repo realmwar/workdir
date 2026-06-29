@@ -231,7 +231,7 @@ def validate_schema(df, expected_cols, name):
     print(f"[{name}] Schema validation passed — {len(expected_cols)} columns OK.")
 
 
-def align_to_model_signature(df, pyfunc_model, model_name):
+def align_to_model_signature(df, pyfunc_model, model_name, feature_columns=None):
     """Cast a pandas dataframe to the input schema declared in the MLflow model signature.
 
     For column-based schemas we:
@@ -249,6 +249,8 @@ def align_to_model_signature(df, pyfunc_model, model_name):
         return aligned
 
     if hasattr(schema, "is_tensor_spec") and schema.is_tensor_spec():
+        if feature_columns is not None:
+            aligned = aligned[feature_columns].copy()
         for col in aligned.columns:
             aligned[col] = pd.to_numeric(aligned[col], errors="raise").astype("float64")
         return aligned
@@ -390,7 +392,12 @@ validate_schema(nyc_serving, NYC_INPUT_SCHEMA, "nyc_serving")
 # COMMAND ----------
 
 serving_nyc_df = nyc_serving.copy().fillna(0)
-X_nyc_serving = align_to_model_signature(serving_nyc_df, nyc_model, "nyc_model")
+X_nyc_serving = align_to_model_signature(
+    serving_nyc_df[NYC_INPUT_SCHEMA],
+    nyc_model,
+    "nyc_model",
+    feature_columns=NYC_INPUT_SCHEMA,
+)
 
 # Run batch inference.
 nyc_predictions = nyc_model.predict(X_nyc_serving)
