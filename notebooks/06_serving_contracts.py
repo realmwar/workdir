@@ -57,11 +57,46 @@ from datetime import datetime
 import mlflow
 import mlflow.sklearn
 import mlflow.pyfunc
+from mlflow.tracking import MlflowClient
 
 mlflow.set_tracking_uri("databricks")
 mlflow.set_registry_uri("databricks-uc")
 
 CATALOG = "demo"
+try:
+    _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+    _user = _ctx.userName().get()
+    ROSSMANN_EXPERIMENT_NAME = f"/Users/{_user}/rossmann_baseline"
+    NYC_EXPERIMENT_NAME = f"/Users/{_user}/nyc_demand_forecasting"
+except Exception:
+    ROSSMANN_EXPERIMENT_NAME = "/Shared/rossmann_baseline"
+    NYC_EXPERIMENT_NAME = "/Shared/nyc_demand_forecasting"
+
+client = MlflowClient()
+
+
+def latest_registered_model_uri(model_name: str):
+    """Return URI and version for the latest UC model version."""
+    versions = list(client.search_model_versions(f"name = '{model_name}'"))
+    if not versions:
+        raise RuntimeError(f"No registered versions found for model: {model_name}")
+    latest = max(versions, key=lambda mv: int(mv.version))
+    return f"models:/{model_name}/{latest.version}", str(latest.version)
+
+
+def load_latest_champion_run_artifact(experiment_name: str, run_name_like: str):
+    """Fallback loader for the latest champion-registration artifact in a specific experiment."""
+    runs = mlflow.search_runs(
+        experiment_names=[experiment_name],
+        filter_string=f"tags.mlflow.runName LIKE '{run_name_like}'",
+        order_by=["start_time DESC"],
+        max_results=1,
+    )
+    if len(runs) == 0:
+        raise RuntimeError(f"No champion registration run found in experiment: {experiment_name}")
+    run_id = runs.iloc[0].run_id
+    return mlflow.pyfunc.load_model(f"runs:/{run_id}/champion_model"), run_id
+
 print("setup OK")
 
 # COMMAND ----------
@@ -95,24 +130,20 @@ print("setup OK")
 # COMMAND ----------
 
 # Load the Rossmann champion model.
-ROSSMANN_MODEL_URI = f"models:/{CATALOG}.ml.rossmann_sales_champion/1"
+ROSSMANN_MODEL_NAME = f"{CATALOG}.ml.rossmann_sales_champion"
+ROSSMANN_MODEL_URI, rossmann_model_version = latest_registered_model_uri(ROSSMANN_MODEL_NAME)
 try:
     rossmann_model = mlflow.pyfunc.load_model(ROSSMANN_MODEL_URI)
     print(f"Rossmann model loaded: {ROSSMANN_MODEL_URI}")
 except Exception as e:
     print(f"Could not load Rossmann model from registry: {e}")
     print("Falling back to latest run artifact...")
-    # Fallback: load from the latest MLflow run with the champion tag.
-    runs = mlflow.search_runs(
-        filter_string="tags.mlflow.runName LIKE '%champion_registration%'",
-        order_by=["start_time DESC"],
-        max_results=1,
+    rossmann_model, rossmann_fallback_run_id = load_latest_champion_run_artifact(
+        ROSSMANN_EXPERIMENT_NAME,
+        "%champion_registration%",
     )
-    if len(runs) > 0:
-        rossmann_model = mlflow.pyfunc.load_model(f"runs:/{runs.iloc[0].run_id}/champion_model")
-        print(f"Loaded from run: {runs.iloc[0].run_id}")
-    else:
-        raise RuntimeError("No Rossmann champion model found.")
+    rossmann_model_version = "run_artifact"
+    print(f"Loaded from run: {rossmann_fallback_run_id}")
 
 # COMMAND ----------
 
@@ -123,23 +154,20 @@ except Exception as e:
 # COMMAND ----------
 
 # Load the NYC demand champion model.
-NYC_MODEL_URI = f"models:/{CATALOG}.ml.nyc_demand_champion/1"
+NYC_MODEL_NAME = f"{CATALOG}.ml.nyc_demand_champion"
+NYC_MODEL_URI, nyc_model_version = latest_registered_model_uri(NYC_MODEL_NAME)
 try:
     nyc_model = mlflow.pyfunc.load_model(NYC_MODEL_URI)
     print(f"NYC model loaded: {NYC_MODEL_URI}")
 except Exception as e:
     print(f"Could not load NYC model from registry: {e}")
     print("Falling back to latest run artifact...")
-    runs = mlflow.search_runs(
-        filter_string="tags.mlflow.runName LIKE '%NYC_%champion_registration%'",
-        order_by=["start_time DESC"],
-        max_results=1,
+    nyc_model, nyc_fallback_run_id = load_latest_champion_run_artifact(
+        NYC_EXPERIMENT_NAME,
+        "%NYC_%champion_registration%",
     )
-    if len(runs) > 0:
-        nyc_model = mlflow.pyfunc.load_model(f"runs:/{runs.iloc[0].run_id}/champion_model")
-        print(f"Loaded from run: {runs.iloc[0].run_id}")
-    else:
-        raise RuntimeError("No NYC demand champion model found.")
+    nyc_model_version = "run_artifact"
+    print(f"Loaded from run: {nyc_fallback_run_id}")
 
 # COMMAND ----------
 
@@ -253,7 +281,7 @@ out_ross = pd.DataFrame({
     "business_date": rossmann_serving["business_date"],
     "predicted_sales": predictions.flatten(),
     "model_name": "rossmann_sales_champion",
-    "model_version": "1",
+    "model_version": rossmann_model_version,
     "inference_ts": datetime.now(),
 })
 
@@ -318,7 +346,7 @@ out_nyc = pd.DataFrame({
     "pu_location_id": nyc_serving["pu_location_id"],
     "predicted_trip_cnt": nyc_predictions.flatten(),
     "model_name": "nyc_demand_champion",
-    "model_version": "1",
+    "model_version": nyc_model_version,
     "inference_ts": datetime.now(),
 })
 
