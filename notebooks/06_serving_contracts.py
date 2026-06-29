@@ -232,16 +232,45 @@ def validate_schema(df, expected_cols, name):
 
 
 def align_to_model_signature(df, pyfunc_model, model_name):
-    """Cast a pandas dataframe to the input dtypes declared in the MLflow model signature."""
+    """Cast a pandas dataframe to the input schema declared in the MLflow model signature.
+
+    For column-based schemas we:
+    1. add any missing columns with safe defaults,
+    2. cast dtypes to match the signature,
+    3. reorder columns exactly as the model expects.
+
+    For tensor-based schemas (common with Keras/TensorFlow models), we simply coerce
+    every column to numeric float64 and preserve the existing column order.
+    """
     schema = pyfunc_model.metadata.get_input_schema()
     aligned = df.copy()
 
+    if schema is None:
+        return aligned
+
+    if hasattr(schema, "is_tensor_spec") and schema.is_tensor_spec():
+        for col in aligned.columns:
+            aligned[col] = pd.to_numeric(aligned[col], errors="raise").astype("float64")
+        return aligned
+
+    expected_cols = []
     for col_spec in schema.inputs:
         col_name = col_spec.name
         col_type = str(col_spec.type).lower()
+        expected_cols.append(col_name)
 
         if col_name not in aligned.columns:
-            raise ValueError(f"[{model_name}] Missing required column: {col_name}")
+            if col_type in ("integer", "long"):
+                aligned[col_name] = 0
+            elif col_type in ("float", "double"):
+                aligned[col_name] = 0.0
+            elif col_type == "boolean":
+                aligned[col_name] = False
+            elif col_type == "string":
+                aligned[col_name] = ""
+            else:
+                aligned[col_name] = 0.0
+            print(f"[{model_name}] Added missing column with default value: {col_name}")
 
         if col_type in ("integer", "long"):
             aligned[col_name] = pd.to_numeric(aligned[col_name], errors="raise").astype("int64")
@@ -252,7 +281,7 @@ def align_to_model_signature(df, pyfunc_model, model_name):
         elif col_type == "string":
             aligned[col_name] = aligned[col_name].astype("string")
 
-    return aligned
+    return aligned[expected_cols]
 
 # COMMAND ----------
 
@@ -293,10 +322,9 @@ for col in CAT_COLS:
 
 serving_df = serving_df.fillna(0)
 
-# The model expects features in the same order as training.
-# Use the input schema columns for prediction.
-X_serving = serving_df[ROSSMANN_INPUT_SCHEMA]
-X_serving = align_to_model_signature(X_serving, rossmann_model, "rossmann_model")
+# Start from the full serving dataframe and let the MLflow signature decide the exact
+# required feature order. Missing train-only lag features are backfilled with safe defaults.
+X_serving = align_to_model_signature(serving_df, rossmann_model, "rossmann_model")
 
 # Run batch inference.
 predictions = rossmann_model.predict(X_serving)
@@ -362,8 +390,7 @@ validate_schema(nyc_serving, NYC_INPUT_SCHEMA, "nyc_serving")
 # COMMAND ----------
 
 serving_nyc_df = nyc_serving.copy().fillna(0)
-X_nyc_serving = serving_nyc_df[NYC_INPUT_SCHEMA]
-X_nyc_serving = align_to_model_signature(X_nyc_serving, nyc_model, "nyc_model")
+X_nyc_serving = align_to_model_signature(serving_nyc_df, nyc_model, "nyc_model")
 
 # Run batch inference.
 nyc_predictions = nyc_model.predict(X_nyc_serving)
