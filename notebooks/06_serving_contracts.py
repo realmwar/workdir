@@ -230,6 +230,30 @@ def validate_schema(df, expected_cols, name):
         raise ValueError(f"[{name}] Missing columns: {missing}")
     print(f"[{name}] Schema validation passed — {len(expected_cols)} columns OK.")
 
+
+def align_to_model_signature(df, pyfunc_model, model_name):
+    """Cast a pandas dataframe to the input dtypes declared in the MLflow model signature."""
+    schema = pyfunc_model.metadata.get_input_schema()
+    aligned = df.copy()
+
+    for col_spec in schema.inputs:
+        col_name = col_spec.name
+        col_type = str(col_spec.type).lower()
+
+        if col_name not in aligned.columns:
+            raise ValueError(f"[{model_name}] Missing required column: {col_name}")
+
+        if col_type in ("integer", "long"):
+            aligned[col_name] = pd.to_numeric(aligned[col_name], errors="raise").astype("int64")
+        elif col_type in ("float", "double"):
+            aligned[col_name] = pd.to_numeric(aligned[col_name], errors="raise").astype("float64")
+        elif col_type == "boolean":
+            aligned[col_name] = aligned[col_name].astype("bool")
+        elif col_type == "string":
+            aligned[col_name] = aligned[col_name].astype("string")
+
+    return aligned
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -272,6 +296,7 @@ serving_df = serving_df.fillna(0)
 # The model expects features in the same order as training.
 # Use the input schema columns for prediction.
 X_serving = serving_df[ROSSMANN_INPUT_SCHEMA]
+X_serving = align_to_model_signature(X_serving, rossmann_model, "rossmann_model")
 
 # Run batch inference.
 predictions = rossmann_model.predict(X_serving)
@@ -338,6 +363,7 @@ validate_schema(nyc_serving, NYC_INPUT_SCHEMA, "nyc_serving")
 
 serving_nyc_df = nyc_serving.copy().fillna(0)
 X_nyc_serving = serving_nyc_df[NYC_INPUT_SCHEMA]
+X_nyc_serving = align_to_model_signature(X_nyc_serving, nyc_model, "nyc_model")
 
 # Run batch inference.
 nyc_predictions = nyc_model.predict(X_nyc_serving)
