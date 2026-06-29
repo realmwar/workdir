@@ -23,11 +23,13 @@
 # MAGIC %md
 # MAGIC Databricks Free can ship an older MLflow build that is unreliable with Unity Catalog model
 # MAGIC operations. We upgrade MLflow to the same Databricks-compatible version already needed in the
-# MAGIC training notebooks so registry model loading behaves consistently here as well.
+# MAGIC training notebooks. We also install the TensorFlow/Keras stack because the NYC champion may be
+# MAGIC a neural network model, and this notebook has to be able to deserialize either sklearn or FNN
+# MAGIC artifacts from the registry.
 
 # COMMAND ----------
 
-# MAGIC %pip install --upgrade --force-reinstall "mlflow[databricks]==2.22.0"
+# MAGIC %pip install --upgrade --force-reinstall "mlflow[databricks]==2.22.0" "tensorflow==2.15.1" "keras==2.15.0" "protobuf==4.25.3"
 
 # COMMAND ----------
 
