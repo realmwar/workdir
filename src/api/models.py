@@ -89,7 +89,9 @@ def align_to_model_signature(features: pd.DataFrame, model: Any) -> pd.DataFrame
     expected_cols = []
     for col_spec in schema.inputs:
         col_name = col_spec.name
-        col_type = str(col_spec.type).lower()
+        # MLflow may stringify types as "integer" or "DataType.integer".
+        col_type = str(getattr(col_spec.type, "name", col_spec.type)).lower()
+        col_type = col_type.replace("datatype.", "")
         expected_cols.append(col_name)
 
         if col_name not in aligned.columns:
@@ -105,7 +107,10 @@ def align_to_model_signature(features: pd.DataFrame, model: Any) -> pd.DataFrame
                 aligned[col_name] = 0.0
             logger.info("Added missing model-signature column with default: %s", col_name)
 
-        if col_type in ("integer", "long"):
+        if col_type == "integer":
+            # MLflow "integer" is int32; int64 fails schema enforcement.
+            aligned[col_name] = pd.to_numeric(aligned[col_name], errors="raise").astype("int32")
+        elif col_type == "long":
             aligned[col_name] = pd.to_numeric(aligned[col_name], errors="raise").astype("int64")
         elif col_type in ("float", "double"):
             aligned[col_name] = pd.to_numeric(aligned[col_name], errors="raise").astype("float64")
