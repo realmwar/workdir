@@ -298,19 +298,4 @@ Add job YAMLs from `jobs/` to `databricks.yml` under `resources.jobs` and deploy
 databricks bundle deploy
 ```
 
-## Competency Coverage
 
-Full coverage tracking is maintained in `docs/html/README_competency_jobs.html` with per-file coverage blocks mapped to every job and competency.
-
-### Coverage Matrix
-
-| Competency Area | Jobs | Artifacts |
-|---|---|---|
-| Deep Learning | 3 | `04_deep_learning_experiments.py` |
-| Machine Learning | 4 | `03_ml_baseline_training.py`, `05_nyc_demand_model.py` |
-| MLOps | 1 | `03`, `06`, `jobs/`, `dashboards/` |
-| Data Engineering | 2 | `00`, `01`, `02`, `dashboards/`, `jobs/` |
-| ML Engineering | 5 | `03`, `04`, `05`, `06`, `src/frontend/`, `dashboards/` |
-| Programming | 6 | `07`, `08`, `src/api/` |
-| Statistics & Math | 3 | `01`, `02`, `03`, `04`, `dashboards/` |
-| **Total** | **24 jobs** | **All artifacts** |
