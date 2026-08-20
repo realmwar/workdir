@@ -33,9 +33,9 @@ workdir/
 │       ├── Dockerfile                      #   Container image for local UI
 │       ├── requirements.txt                #   Python dependencies
 │       └── pages/
-│           ├── 1_rossmann_prediction.py    #   Store sales prediction page
-│           ├── 2_nyc_demand_heatmap.py     #   Zone-hour demand visualization
-│           └── 3_model_comparison.py       #   Model metrics dashboard
+│           ├── 1_rossmann_prediction.py    #   Live: store-day / 7-day predict
+│           ├── 2_nyc_demand_heatmap.py     #   Live heatmap + demo 24h curve
+│           └── 3_model_comparison.py       #   Demo: notebook 03–05 val metrics
 ├── dashboards/                             # Databricks AI/BI dashboards + SQL
 │   ├── README.md                           #   Board descriptions
 │   ├── *_dashboard.sql                     #   Widget SQL libraries
@@ -73,6 +73,8 @@ workdir/
 Notebooks `00` through `08` have been executed successfully in Databricks.
 
 The core E2E ML pipeline path is `00` → `01` → `02` → `03` → `04` → `05` → `06`. It builds the UC medallion data layers, trains/registers Rossmann and NYC models, and writes batch inference outputs into `demo.serving`.
+
+Local apps under `src/` are the online twin of notebook `06`: FastAPI loads the same UC champions via MLflow; Streamlit talks only to that API (except Model Comparison, which is a static copy of notebook metrics).
 
 Notebooks `07_concurrency_experiments.py` and `08_code_assessment.py` are standalone competency labs. They support the project evidence matrix with concurrency, algorithms, profiling, refactoring, and design-pattern examples, but they are not required to produce serving predictions.
 
@@ -167,6 +169,83 @@ Standalone labs (competency evidence only): `07` concurrency, `08` code assessme
 | **Outputs** | Assessment examples and algorithm demos (no production serving tables). |
 | **Used next by** | Competency evidence for Programming (algorithms / SE / code assessment); outside the predict chain. |
 
+## Local apps (`src/`)
+
+After notebook `06`, the same UC champions are scored in a local Docker Compose stack. This is **not** Databricks Model Serving REST: FastAPI downloads `models:/…` artifacts with workspace credentials and runs `predict` in-process. Streamlit never talks to Databricks — only to FastAPI.
+
+```text
+UC champions → FastAPI (load + align + predict) → Streamlit Live UI
+                                              ↘ Swagger /health /models
+Notebook 03–05 val metrics (copied) → Streamlit Model Comparison (Demo only)
+```
+
+### Summary
+
+| Piece | Role |
+|---|---|
+| FastAPI (`src/api/`) | Local serving layer: health, model metadata, `POST /predict/*`, signature align |
+| Streamlit (`src/frontend/`) | UI over that API (Live) plus a static metrics page (Demo) |
+| Compose | `api` on `:8000`, `frontend` on `:8501`, frontend waits until API healthcheck is green |
+
+### FastAPI backend
+`src/api/`
+
+| | |
+|---|---|
+| **Goal** | Expose the registered Rossmann and NYC champions as a JSON API for Streamlit and Swagger. |
+| **Outputs** | `GET /health`, `GET /models`, `POST /predict/rossmann`, `POST /predict/nyc-demand`, OpenAPI at `/docs`. |
+| **Used next by** | Streamlit Live pages; Swagger Try it out. Dashboards do **not** call this API — they read UC tables. |
+
+#### Layout
+
+| File | What it does |
+|---|---|
+| `main.py` | Lifespan loads both champions (`mlflow.pyfunc.load_model` + `DATABRICKS_HOST` / `DATABRICKS_TOKEN`). Wires routes. Default URIs: `models:/demo.ml.rossmann_sales_champion/3`, `models:/demo.ml.nyc_demand_champion/2`. |
+| `models.py` | Loader factory (`models:/` / `runs:/` → MLflow; `.pkl` fallback). `align_to_model_signature` fills missing train-only columns and casts MLflow `integer` to **int32** (int64 fails schema enforcement). |
+| `services.py` | Rossmann / NYC feature order, `predict` → `predicted_sales` / `predicted_trip_cnt` plus model name, version, `inference_ts`. |
+| `schemas.py` | Pydantic request/response bodies and Swagger examples (single + small batch). |
+
+Predict accepts batched `instances`. The API returns scores of the **current champion only** — not an experiment matrix (that is why Model Comparison is Demo).
+
+### Streamlit frontend
+`src/frontend/`
+
+| | |
+|---|---|
+| **Goal** | Show live scoring of the same champions, plus a static leaderboard of notebook validation metrics. |
+| **Outputs** | App on `:8501`; pages under `pages/`. |
+| **Used next by** | Local demo / review. Not a source for Databricks AI/BI boards. |
+
+`app.py` is the home page (orientation only — no model call). Sidebar `API Base URL` defaults to `API_BASE_URL` (`http://api:8000` in Compose, `http://localhost:8000` on the host).
+
+#### Summary
+
+| Page | Mode | What it does |
+|---|---|---|
+| Rossmann Prediction | **Live UI** | `POST /predict/rossmann` — one store-day or a 7-day batch (same champion, not a weekly model) |
+| NYC Demand Heatmap | **Live UI** | `POST /predict/nyc-demand` — selected hour × N zones |
+| NYC 24h curve (on the heatmap page) | **Demo only** | Local typical daily profile; no predict |
+| Model Comparison | **Demo only** | Static val RMSE / R² / MAPE from notebooks `03`–`05`; no FastAPI, no MLflow |
+
+#### Rossmann Prediction — detail
+- **Question answered:** What does the registered Rossmann champion score for this store-day (or seven days)?
+- **Primary source:** FastAPI → UC `rossmann_sales_champion` (this workspace run: **RandomForest**, lowest val RMSE in notebook `03`; FNN_deep and VotingEnsemble did not replace it).
+- **Live:** single predict + weekly batch on the same `POST /predict/rossmann`.
+- **If API is down:** placeholder demo numbers on that page only — not Model Comparison.
+
+#### NYC Demand Heatmap — detail
+- **Question answered:** Which zones look busy at this hour under the registered NYC champion?
+- **Primary source:** FastAPI → UC `nyc_demand_champion` (this workspace run: **FNN**, lowest val RMSE in notebook `05`).
+- **Live:** one request for hour × zones.
+- **Demo only on the same page:** 24-hour curve — typical zone-hour shape, not a model forecast.
+
+#### Model Comparison — detail
+- **Question answered:** How did the notebook experiments rank on validation RMSE / R² / MAPE, and who is the registered champion?
+- **Primary source:** hardcoded copy of notebook `03` §9 + VotingEnsemble val line, `04` §10 (`dl_comp`), `05` §9 (`comp_df`). Not live MLflow.
+- **Champion rule (same as notebooks):** lowest validation **RMSE**. Banner is separate from “Best by this metric” (R² / MAPE can pick another row).
+- **Rossmann champion:** RandomForest (val RMSE 46.82). **NYC champion:** FNN (val RMSE 3.33).
+- **Not for:** live scoring → use Rossmann / NYC pages; Databricks quality boards → Model Performance.
+
 ## Datasets
 
 | Dataset | Source | Role |
@@ -183,7 +262,7 @@ Standalone labs (competency evidence only): `07` concurrency, `08` code assessme
 | Silver | `demo.silver` | Cleaned, enriched, feature-base tables |
 | Gold | `demo.gold` | Training/serving/dashboard marts + contracts |
 | ML | `demo.ml` | Model predictions and experiment outputs |
-| Serving | `demo.serving` | Batch inference results for API/dashboards |
+| Serving | `demo.serving` | Batch inference results for Databricks dashboards (local FastAPI does not read these tables) |
 | Audit | `demo.audit` | Row-count snapshots, data freshness tracking |
 
 ## Models Trained
@@ -199,6 +278,8 @@ Standalone labs (competency evidence only): `07` concurrency, `08` code assessme
 ### NYC Demand Forecasting
 - LightGBM, XGBoost
 - FNN (256-128-64)
+
+Registered UC champions on the workspace run documented in `src/frontend/pages/3_model_comparison.py`: Rossmann **RandomForest** (notebook `03`, lowest val RMSE); NYC **FNN** (notebook `05`). Notebook `04` FNN_deep did not replace the Rossmann champion.
 
 ## How to Run
 
@@ -229,7 +310,14 @@ After startup:
 - ReDoc: `http://localhost:8000/redoc`
 - In Swagger, use **Try it out** on `/predict/rossmann` and `/predict/nyc-demand` — request bodies ship with ready examples (single + small batch)
 - FastAPI health: `http://localhost:8000/health` (expect `models_loaded.rossmann` and `nyc_demand` = `true`)
-- Streamlit UI: `http://localhost:8501` (calls `http://api:8000` inside Docker)
+- Streamlit UI: `http://localhost:8501` (Live pages call `http://api:8000` inside Docker)
+
+Frontend image copies `src/frontend` at **build** time. After UI code changes:
+
+```bash
+docker compose up -d --build frontend          # waits for api health
+docker compose up -d --build --no-deps frontend  # UI only (Model Comparison does not need the API)
+```
 
 Model URIs (env-overridable):
 
@@ -239,6 +327,8 @@ NYC_MODEL_URI=models:/demo.ml.nyc_demand_champion/2
 ```
 
 ### FastAPI Backend (local)
+See [Local apps (`src/`)](#local-apps-src) for routes and signature align. Host run (no Compose):
+
 ```bash
 cd workdir
 pip install -r src/api/requirements.txt
@@ -246,10 +336,14 @@ uvicorn src.api.main:app --reload --port 8000
 ```
 
 ### Streamlit Frontend (local)
+See [Streamlit frontend](#streamlit-frontend) for Live vs Demo pages.
+
 ```bash
 pip install -r src/frontend/requirements.txt
 streamlit run src/frontend/app.py
 ```
+
+Open `http://localhost:8501`. Point **API Base URL** at `http://localhost:8000` if the API is on the host.
 
 ### Databricks Dashboards
 
